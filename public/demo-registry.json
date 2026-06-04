@@ -1,0 +1,88 @@
+{
+  "skills": [
+    {
+      "name": "GitHub",
+      "slug": "github",
+      "description": "Interact with GitHub using the `gh` CLI. Use `gh issue`, `gh pr`, `gh run`, and `gh api` for issues, PRs, CI runs, and advanced queries.",
+      "version": "1.0.0",
+      "triggers": ["gh", "github", "pr", "issue", "merge", "ci"],
+      "agent": "both",
+      "path": "skills/github",
+      "updatedAt": "2025-06-01T00:00:00Z",
+      "files": ["SKILL.md", "_meta.json"]
+    },
+    {
+      "name": "Frontend Design",
+      "slug": "frontend",
+      "description": "Frontend development with React, Next.js, Tailwind CSS. Build landing pages, dashboards, forms, components. Responsive, accessible, performant UI.",
+      "version": "1.0.2",
+      "triggers": ["frontend", "react", "next.js", "tailwind", "ui", "component"],
+      "agent": "both",
+      "path": "skills/frontend",
+      "updatedAt": "2025-05-28T00:00:00Z",
+      "files": ["SKILL.md", "_meta.json", "stack.md", "animation.md", "colors.md", "examples.md"]
+    },
+    {
+      "name": "Code Gen",
+      "slug": "code-gen",
+      "description": "基于docs/output技术方案文档的生产级Java代码自动生成。自动读取技术方案、接口规范、业务规则，严格按项目分层架构生成可直接上线的代码。",
+      "triggers": ["生成代码", "根据方案生成代码", "自动生成代码", "java", "spring"],
+      "agent": "claude",
+      "path": "skills/code-gen",
+      "updatedAt": "2025-05-20T00:00:00Z",
+      "files": ["SKILL.md"]
+    },
+    {
+      "name": "Agent Browser",
+      "slug": "agent-browser",
+      "description": "A fast Rust-based headless browser automation CLI with Node.js fallback that enables AI agents to navigate, click, type, and snapshot pages via structured commands.",
+      "version": "0.2.0",
+      "triggers": ["browser", "navigate", "screenshot", "automate"],
+      "agent": "claude",
+      "path": "skills/agent-browser",
+      "updatedAt": "2025-05-15T00:00:00Z",
+      "files": ["SKILL.md", "_meta.json", "CONTRIBUTING.md"]
+    },
+    {
+      "name": "TDD",
+      "slug": "tdd",
+      "description": "Test-driven development workflow. Write tests first, then implement. Supports Jest, Vitest, and Pytest frameworks with auto-watch and coverage reporting.",
+      "triggers": ["test", "tdd", "testing", "jest", "vitest"],
+      "agent": "hermes",
+      "path": "skills/tdd",
+      "updatedAt": "2025-05-10T00:00:00Z",
+      "files": ["SKILL.md"]
+    },
+    {
+      "name": "Copywriting",
+      "slug": "copywriting",
+      "description": "AI-powered copywriting assistant. Generate marketing copy, product descriptions, email campaigns, social media posts, and ad creative with brand voice consistency.",
+      "triggers": ["copy", "writing", "marketing", "content", "email"],
+      "agent": "both",
+      "path": "skills/copywriting",
+      "updatedAt": "2025-05-12T00:00:00Z",
+      "files": ["SKILL.md", "templates.md"]
+    },
+    {
+      "name": "Excel XLSX",
+      "slug": "excel-xlsx",
+      "description": "Generate, read, and manipulate Excel spreadsheets programmatically. Create reports, dashboards, data exports with formatting, charts, and pivot tables.",
+      "triggers": ["excel", "xlsx", "spreadsheet", "report", "export"],
+      "agent": "claude",
+      "path": "skills/excel-xlsx",
+      "updatedAt": "2025-05-08T00:00:00Z",
+      "files": ["SKILL.md"]
+    },
+    {
+      "name": "Weather",
+      "slug": "weather",
+      "description": "Get current weather and forecasts for any location. Supports temperature, humidity, wind, UV index, and severe weather alerts.",
+      "triggers": ["weather", "forecast", "temperature", "rain"],
+      "agent": "hermes",
+      "path": "skills/weather",
+      "updatedAt": "2025-04-28T00:00:00Z",
+      "files": ["SKILL.md"]
+    }
+  ],
+  "updatedAt": "2025-06-04T00:00:00Z"
+}
