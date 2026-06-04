@@ -36,7 +36,7 @@ export async function GET(
   try {
     const { slug } = await params;
 
-    if (!GITHUB_CONFIG.repo) {
+    if (!GITHUB_CONFIG.repo || !GITHUB_CONFIG.token) {
       const demo = getDemoSkill(slug);
       if (!demo) return Response.json({ error: "Not found" }, { status: 404 });
       return Response.json(demo);

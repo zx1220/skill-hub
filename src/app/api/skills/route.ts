@@ -15,8 +15,8 @@ function getDemoRegistry() {
 
 export async function GET() {
   try {
-    // If no GitHub repo configured, serve demo data
-    if (!GITHUB_CONFIG.repo) {
+    // If no GitHub repo or token configured, serve demo data
+    if (!GITHUB_CONFIG.repo || !GITHUB_CONFIG.token) {
       return Response.json(getDemoRegistry());
     }
     const registry = await getSkillRegistry();
