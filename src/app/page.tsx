@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useDeferredValue } from "react";
 import { Plus } from "lucide-react";
 import { NavBar } from "@/components/nav-bar";
 import { SkillCard } from "@/components/skill-card";
@@ -26,6 +26,8 @@ export default function Dashboard() {
       .catch(() => setLoading(false));
   }, []);
 
+  const deferredSearch = useDeferredValue(search);
+
   const filtered = useMemo(() => {
     let result = skills;
 
@@ -34,9 +36,9 @@ export default function Dashboard() {
       result = result.filter((s) => s.agent === agentFilter);
     }
 
-    // Search filter
-    if (search.trim()) {
-      const q = search.toLowerCase();
+    // Search filter (uses deferred value for performance)
+    if (deferredSearch.trim()) {
+      const q = deferredSearch.toLowerCase();
       result = result.filter(
         (s) =>
           s.name.toLowerCase().includes(q) ||
@@ -47,7 +49,7 @@ export default function Dashboard() {
     }
 
     return result;
-  }, [skills, agentFilter, search]);
+  }, [skills, agentFilter, deferredSearch]);
 
   const handleCreate = async (input: CreateSkillInput) => {
     const res = await fetch("/api/skills", {

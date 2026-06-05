@@ -2,6 +2,30 @@ import { GITHUB_CONFIG } from "./constants";
 import type { SkillMeta, SkillDetail, SkillRegistry, CreateSkillInput, AgentType } from "./types";
 
 const BASE = "https://api.github.com";
+const CACHE_TTL = 60_000; // 60s
+
+// --- In-memory cache ---
+const cache = new Map<string, { data: unknown; expiry: number }>();
+
+function getCached<T>(key: string): T | null {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiry) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.data as T;
+}
+
+function setCache<T>(key: string, data: T): void {
+  cache.set(key, { data, expiry: Date.now() + CACHE_TTL });
+}
+
+function clearCache(): void {
+  cache.clear();
+}
+
+// --- GitHub helpers ---
 
 function headers(): Record<string, string> {
   const h: Record<string, string> = {
@@ -17,7 +41,8 @@ function repoUrl(path: string) {
   return `${BASE}/repos/${GITHUB_CONFIG.repo}/contents/${path}?ref=${GITHUB_CONFIG.branch}`;
 }
 
-/** Parse SKILL.md frontmatter */
+// --- Frontmatter parser ---
+
 function parseFrontmatter(content: string): {
   name: string;
   description: string;
@@ -49,7 +74,20 @@ function parseFrontmatter(content: string): {
   };
 }
 
-/** Fetch file content from GitHub */
+// --- Install command builder (DRY) ---
+
+export function buildInstallCmd(agent: AgentType, slug: string): string {
+  if (agent === "hermes") {
+    return `skill-sync install ${slug} --agent hermes`;
+  }
+  if (agent === "both") {
+    return `skill-sync install ${slug} --agent claude\nskill-sync install ${slug} --agent hermes`;
+  }
+  return `skill-sync install ${slug} --agent claude`;
+}
+
+// --- Low-level GitHub API ---
+
 async function fetchFile(path: string): Promise<string> {
   const res = await fetch(repoUrl(path), { headers: headers() });
   if (!res.ok) throw new Error(`Failed to fetch ${path}: ${res.status}`);
@@ -57,7 +95,6 @@ async function fetchFile(path: string): Promise<string> {
   return atob(data.content);
 }
 
-/** List directory contents from GitHub */
 async function listDir(path: string): Promise<{ name: string; path: string; type: string }[]> {
   const res = await fetch(repoUrl(path), { headers: headers() });
   if (!res.ok) return [];
@@ -70,96 +107,125 @@ async function listDir(path: string): Promise<{ name: string; path: string; type
   }));
 }
 
-/** Get the skill registry index */
+/** Get the last commit date for a path from GitHub */
+async function getLastCommitDate(path: string): Promise<string> {
+  try {
+    const url = `${BASE}/repos/${GITHUB_CONFIG.repo}/commits?path=${path}&per_page=1`;
+    const res = await fetch(url, { headers: headers() });
+    if (!res.ok) return "";
+    const commits = await res.json();
+    if (Array.isArray(commits) && commits.length > 0) {
+      return commits[0].commit?.committer?.date || "";
+    }
+  } catch {
+    // fallback to empty
+  }
+  return "";
+}
+
+// --- Public API ---
+
 export async function getSkillRegistry(): Promise<SkillRegistry> {
+  const cacheKey = "registry";
+  const cached = getCached<SkillRegistry>(cacheKey);
+  if (cached) return cached;
+
   try {
     const content = await fetchFile("registry.json");
-    return JSON.parse(content);
+    const registry = JSON.parse(content) as SkillRegistry;
+    setCache(cacheKey, registry);
+    return registry;
   } catch {
-    // If no registry.json, build from directory listing
-    return buildRegistry();
+    const registry = await buildRegistry();
+    setCache(cacheKey, registry);
+    return registry;
   }
 }
 
-/** Build registry by scanning repo */
 async function buildRegistry(): Promise<SkillRegistry> {
   const dirs = await listDir("skills");
-  const skills: SkillMeta[] = [];
+  if (dirs.length === 0) return { skills: [], updatedAt: "" };
 
-  for (const dir of dirs) {
-    if (dir.type !== "dir") continue;
+  // Fetch all skills in parallel
+  const results = await Promise.allSettled(
+    dirs
+      .filter((dir) => dir.type === "dir")
+      .map(async (dir) => {
+        const skillMd = await fetchFile(`${dir.path}/SKILL.md`);
+        const parsed = parseFrontmatter(skillMd);
+        const files = await listDir(dir.path);
 
-    try {
-      const skillMd = await fetchFile(`${dir.path}/SKILL.md`);
-      const parsed = parseFrontmatter(skillMd);
-      const files = await listDir(dir.path);
-
-      // Detect agent from directory structure or metadata
-      const metaFile = files.find((f) => f.name === "_meta.json");
-      let agent: "claude" | "hermes" | "both" = "claude";
-      if (metaFile) {
-        try {
-          const metaContent = await fetchFile(metaFile.path);
-          const meta = JSON.parse(metaContent);
-          // If ownerId exists, it's from clawic store (used by both)
-          agent = "both";
-        } catch {
-          // ignore
+        const metaFile = files.find((f) => f.name === "_meta.json");
+        let agent: AgentType = "claude";
+        if (metaFile) {
+          try {
+            await fetchFile(metaFile.path);
+            agent = "both";
+          } catch {
+            // ignore
+          }
         }
-      }
 
-      skills.push({
-        name: parsed.name || dir.name,
-        slug: dir.name,
-        description: parsed.description,
-        version: parsed.version,
-        triggers: parsed.triggers,
-        agent,
-        path: dir.path,
-        updatedAt: new Date().toISOString(),
-        files: files.map((f) => f.name),
-      });
-    } catch {
-      // Skip skills without SKILL.md
-    }
-  }
+        const updatedAt = await getLastCommitDate(dir.path);
+
+        const skill: SkillMeta = {
+          name: parsed.name || dir.name,
+          slug: dir.name,
+          description: parsed.description,
+          version: parsed.version,
+          triggers: parsed.triggers,
+          agent,
+          path: dir.path,
+          updatedAt,
+          files: files.map((f) => f.name),
+        };
+        return skill;
+      })
+  );
+
+  const skills = results
+    .filter((r): r is PromiseFulfilledResult<SkillMeta> => r.status === "fulfilled")
+    .map((r) => r.value);
 
   return { skills, updatedAt: new Date().toISOString() };
 }
 
-/** Get a single skill detail */
 export async function getSkillDetail(slug: string): Promise<SkillDetail | null> {
+  const cacheKey = `detail:${slug}`;
+  const cached = getCached<SkillDetail>(cacheKey);
+  if (cached) return cached;
+
   const dirPath = `skills/${slug}`;
   const content = await fetchFile(`${dirPath}/SKILL.md`);
   const parsed = parseFrontmatter(content);
   const files = await listDir(dirPath);
 
   const metaFile = files.find((f) => f.name === "_meta.json");
-  const isBoth = !!metaFile;
-  const installCmd = isBoth
-    ? `skill-sync install ${slug} --agent claude\nskill-sync install ${slug} --agent hermes`
-    : `skill-sync install ${slug} --agent claude`;
+  const agent: AgentType = metaFile ? "both" : "claude";
+  const installCmd = buildInstallCmd(agent, slug);
+  const updatedAt = await getLastCommitDate(dirPath);
 
-  return {
+  const detail: SkillDetail = {
     name: parsed.name || slug,
     slug,
     description: parsed.description,
     version: parsed.version,
     triggers: parsed.triggers,
-    agent: isBoth ? "both" : "claude",
+    agent,
     path: dirPath,
-    updatedAt: new Date().toISOString(),
+    updatedAt,
     files: files.map((f) => f.name),
     content,
     installCmd,
   };
+
+  setCache(cacheKey, detail);
+  return detail;
 }
 
-/** Create or update a skill via GitHub API */
 export async function upsertSkill(input: CreateSkillInput): Promise<{ sha: string }> {
   const { slug, content, agent, name, description, triggers } = input;
 
-  // Build SKILL.md with frontmatter
   const triggerLines = triggers?.length
     ? `\nread_when:\n${triggers.map((t) => `  - ${t}`).join("\n")}`
     : "";
@@ -174,7 +240,6 @@ ${content}`;
   const path = `skills/${slug}/SKILL.md`;
   let sha: string | undefined;
 
-  // Try to get existing file SHA for update
   try {
     const existing = await fetch(repoUrl(path), { headers: headers() });
     if (existing.ok) {
@@ -205,42 +270,66 @@ ${content}`;
 
   const data = await res.json();
 
-  // Also update registry.json
+  // Invalidate cache after write
+  clearCache();
+
   await updateRegistry();
 
   return { sha: data.content.sha };
 }
 
-/** Delete a skill from GitHub */
 export async function deleteSkill(slug: string): Promise<void> {
-  const path = `skills/${slug}/SKILL.md`;
+  const dirPath = `skills/${slug}`;
 
-  // Get SHA of existing file
-  const existing = await fetch(repoUrl(path), { headers: headers() });
-  if (!existing.ok) throw new Error(`Skill ${slug} not found`);
-  const data = await existing.json();
-  const sha = data.sha;
+  // List all files in the skill directory
+  const files = await listDir(dirPath);
 
-  // Delete the file
-  const res = await fetch(repoUrl(path), {
-    method: "DELETE",
-    headers: { ...headers(), "Content-Type": "application/json" },
-    body: JSON.stringify({
-      message: `Delete skill: ${slug}`,
-      sha,
-      branch: GITHUB_CONFIG.branch,
-    }),
-  });
+  // Delete each file in parallel
+  await Promise.all(
+    files.map(async (file) => {
+      // Get SHA for each file
+      const fileRes = await fetch(repoUrl(file.path), { headers: headers() });
+      if (!fileRes.ok) return; // skip files we can't get SHA for
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Failed to delete skill: ${err}`);
+      const fileData = await fileRes.json();
+      const fileSha = fileData.sha;
+
+      await fetch(repoUrl(file.path), {
+        method: "DELETE",
+        headers: { ...headers(), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: `Delete ${file.name} from skill: ${slug}`,
+          sha: fileSha,
+          branch: GITHUB_CONFIG.branch,
+        }),
+      });
+    })
+  );
+
+  // Also try to delete the directory entry itself if no files found
+  if (files.length === 0) {
+    const skillPath = `${dirPath}/SKILL.md`;
+    const existing = await fetch(repoUrl(skillPath), { headers: headers() });
+    if (existing.ok) {
+      const data = await existing.json();
+      await fetch(repoUrl(skillPath), {
+        method: "DELETE",
+        headers: { ...headers(), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: `Delete skill: ${slug}`,
+          sha: data.sha,
+          branch: GITHUB_CONFIG.branch,
+        }),
+      });
+    }
   }
+
+  // Invalidate cache after write
+  clearCache();
 
   await updateRegistry();
 }
 
-/** Update the registry.json file */
 async function updateRegistry(): Promise<void> {
   const registry = await buildRegistry();
   const content = JSON.stringify(registry, null, 2);

@@ -24,10 +24,11 @@ export const AGENT_INSTALL_PATHS = {
   hermes: "~/.hermes/skills",
 } as const;
 
+export const AGENT_TYPES = ["claude", "hermes", "both"] as const;
+
 export const GITHUB_CONFIG = {
-  /** Will be set via env var */
-  repo: process.env.NEXT_PUBLIC_SKILL_REPO || "",
-  branch: process.env.NEXT_PUBLIC_SKILL_BRANCH || "main",
+  repo: process.env.SKILL_REPO || "",
+  branch: process.env.SKILL_BRANCH || "main",
   token: process.env.GITHUB_TOKEN || "",
 } as const;
 

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { SITE_CONFIG } from "@/lib/constants";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,8 +14,16 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Skill Hub — AI Skill Registry",
-  description: "Manage, discover, and install skills for Claude Code & Hermes",
+  title: {
+    default: `${SITE_CONFIG.name} — AI Skill Registry`,
+    template: `%s | ${SITE_CONFIG.name}`,
+  },
+  description: SITE_CONFIG.description,
+  openGraph: {
+    title: SITE_CONFIG.name,
+    description: SITE_CONFIG.description,
+    type: "website",
+  },
 };
 
 export default function RootLayout({
