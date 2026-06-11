@@ -2,18 +2,22 @@
   "notes": [
     {
       "id": "95ff2fe8",
-      "title": "Claude API Tool Use 最佳实践",
-      "content": "# Claude API Tool Use\n\n## 基本模式\n\n使用 tools 参数定义可用工具，Claude 会根据用户输入决定是否调用。\n\n## 关键要点\n\n1. 工具定义要清晰，description 越详细越好\n2. 参数用 JSON Schema 约束\n3. 多轮对话中 tool_result 必须回传\n4. 错误处理返回错误信息而非抛异常\n\n## 性能优化\n\n- 使用 tool_choice 控制是否强制调用\n- 流式响应 stream=True\n- Prompt Caching 减少 token 开销",
+      "title": "Claude API Tool Use æä½³å®è·µ",
+      "content": "# Claude API Tool Use\n\n## åºæ¬æ¨¡å¼\n\nä½¿ç¨ tools åæ°å®ä¹å¯ç¨å·¥å·ï¼Claude ä¼æ ¹æ®ç¨æ·è¾å¥å³å®æ¯å¦è°ç¨ã\n\n## å³é®è¦ç¹\n\n1. å·¥å·å®ä¹è¦æ¸æ°ï¼description è¶è¯¦ç»è¶å¥½\n2. åæ°ç¨ JSON Schema çº¦æ\n3. å¤è½®å¯¹è¯ä¸­ tool_result å¿é¡»åä¼ \n4. éè¯¯å¤çè¿åéè¯¯ä¿¡æ¯èéæå¼å¸¸\n\n## æ§è½ä¼å\n\n- ä½¿ç¨ tool_choice æ§å¶æ¯å¦å¼ºå¶è°ç¨\n- æµå¼ååº stream=True\n- Prompt Caching åå° token å¼é",
       "summary": "",
       "tags": [
-        "Claude",
-        "AI"
+        "claude api",
+        "tool use",
+        "json schema",
+        "性能优化",
+        "错误处理",
+        "prompt caching"
       ],
-      "category": "",
-      "status": "draft",
+      "category": "技术",
+      "status": "classified",
       "createdAt": "2026-06-11T13:43:00.808Z",
-      "updatedAt": "2026-06-11T13:43:00.808Z"
+      "updatedAt": "2026-06-11T13:44:40.762Z"
     }
   ],
-  "updatedAt": "2026-06-11T13:43:00.808Z"
+  "updatedAt": "2026-06-11T13:44:40.762Z"
 }
