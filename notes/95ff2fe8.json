@@ -1,0 +1,14 @@
+{
+  "id": "95ff2fe8",
+  "title": "Claude API Tool Use 最佳实践",
+  "content": "# Claude API Tool Use\n\n## 基本模式\n\n使用 tools 参数定义可用工具，Claude 会根据用户输入决定是否调用。\n\n## 关键要点\n\n1. 工具定义要清晰，description 越详细越好\n2. 参数用 JSON Schema 约束\n3. 多轮对话中 tool_result 必须回传\n4. 错误处理返回错误信息而非抛异常\n\n## 性能优化\n\n- 使用 tool_choice 控制是否强制调用\n- 流式响应 stream=True\n- Prompt Caching 减少 token 开销",
+  "summary": "",
+  "tags": [
+    "Claude",
+    "AI"
+  ],
+  "category": "",
+  "status": "draft",
+  "createdAt": "2026-06-11T13:43:00.808Z",
+  "updatedAt": "2026-06-11T13:43:00.808Z"
+}
