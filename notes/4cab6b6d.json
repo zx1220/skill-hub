@@ -4,10 +4,11 @@
   "content": "# Hello\n\nThis is a test note.",
   "summary": "",
   "tags": [
-    "test"
+    "test",
+    "updated"
   ],
-  "category": "",
-  "status": "draft",
+  "category": "技术",
+  "status": "classified",
   "createdAt": "2026-06-11T13:39:16.986Z",
-  "updatedAt": "2026-06-11T13:39:16.986Z"
+  "updatedAt": "2026-06-11T13:39:42.290Z"
 }
