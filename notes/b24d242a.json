@@ -1,11 +1,11 @@
 {
   "id": "b24d242a",
-  "title": "Browser Test Note",
+  "title": "Browser Test Note (Updated)",
   "content": "# Browser Test Note\\n\\nThis is a test note created via browser automation.\\n\\n## Key Points\\n\\n- Testing note creation\\n- Markdown rendering\\n- CRUD operations",
   "summary": "",
   "tags": [],
   "category": "",
   "status": "draft",
   "createdAt": "2026-06-12T02:43:08.021Z",
-  "updatedAt": "2026-06-12T02:43:08.021Z"
+  "updatedAt": "2026-06-12T02:43:55.064Z"
 }
