@@ -49,3 +49,7 @@ next-env.d.ts
 
 # bun-only project: do not commit npm lock file
 package-lock.json
+
+# skill-sync CLI / agent local state
+.agents/
+skills-lock.json
