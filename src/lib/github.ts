@@ -224,7 +224,7 @@ export async function getSkillDetail(slug: string): Promise<SkillDetail | null> 
 }
 
 export async function upsertSkill(input: CreateSkillInput): Promise<{ sha: string }> {
-  const { slug, content, agent, name, description, triggers } = input;
+  const { slug, content, name, description, triggers } = input;
 
   const triggerLines = triggers?.length
     ? `\nread_when:\n${triggers.map((t) => `  - ${t}`).join("\n")}`

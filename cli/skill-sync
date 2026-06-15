@@ -1,18 +1,24 @@
 #!/usr/bin/env node
 /**
- * skill-sync — CLI tool to upload/download skills between local machine and GitHub repo.
+ * skill-sync — CLI tool to sync Claude Code skills with a Skill Hub server.
  *
  * Usage:
- *   skill-sync push <skill-name> [--agent claude|hermes]   Upload local skill to repo
- *   skill-sync pull [skill-name] [--agent claude|hermes]    Download skill(s) from repo
- *   skill-sync list [--agent claude|hermes]                 List all skills in repo
- *   skill-sync install <skill-name> --agent <agent>         Install a skill to local dir
+ *   skill-sync auth <server-url> <api-key>              Save credentials
+ *   skill-sync push <skill-name> [--force]              Push local skill to server
+ *   skill-sync push --all                               Push all local skills
+ *   skill-sync pull [skill-name]                        Pull skill(s) from server
+ *   skill-sync list                                     List skills on server
+ *   skill-sync install <skill-name>                     Install skill to local dir
+ *   skill-sync status                                   Show server status
+ *   skill-sync migrate --from-github --repo <r> --token <t>
+ *                                                        Import skills from GitHub
  */
 
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
+const http = require("http");
 const https = require("https");
+const crypto = require("crypto");
 
 // ─── Config ───
 const CONFIG_PATH = path.join(process.env.HOME, ".skill-hub.json");
@@ -25,64 +31,44 @@ function loadConfig() {
   }
 }
 
-function saveConfig(config: Record<string, string>) {
+function saveConfig(config) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 }
 
-const AGENT_PATHS: Record<string, string> = {
-  claude: path.join(process.env.HOME, ".claude", "skills"),
-  hermes: path.join(process.env.HOME, ".hermes", "skills"),
-};
+const CLAUDE_SKILLS_DIR = path.join(process.env.HOME, ".claude", "skills");
 
-// ─── GitHub API helpers ───
-function ghApi(urlPath: string, options: Record<string, unknown> = {}): any {
-  const config = loadConfig();
-  const token = config.github_token || process.env.GITHUB_TOKEN;
-  const repo = config.repo || process.env.SKILL_REPO;
+// ─── HTTP helper ───
+function httpRequest(url, options) {
+  options = options || {};
+  return new Promise(function (resolve, reject) {
+    var parsedUrl = new URL(url);
+    var mod = parsedUrl.protocol === "https:" ? https : http;
 
-  if (!token) {
-    console.error("Error: No GitHub token. Run: skill-sync auth <token>");
-    process.exit(1);
-  }
-  if (!repo) {
-    console.error("Error: No repo configured. Run: skill-sync config repo <owner/repo>");
-    process.exit(1);
-  }
-
-  const url = `https://api.github.com/repos/${repo}/contents/${urlPath}`;
-  const method = (options.method || "GET") as string;
-
-  return new Promise((resolve, reject) => {
-    const opts: Record<string, any> = {
-      hostname: "api.github.com",
-      path: `/repos/${repo}/contents/${urlPath}`,
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github.v3+json",
-        "User-Agent": "skill-sync",
-      },
+    var opts = {
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port || (parsedUrl.protocol === "https:" ? 443 : 80),
+      path: parsedUrl.pathname + parsedUrl.search,
+      method: options.method || "GET",
+      headers: Object.assign(
+        {
+          "Content-Type": "application/json",
+          "User-Agent": "skill-sync/2.0",
+        },
+        options.headers || {}
+      ),
     };
 
-    if (options.body) {
-      const bodyStr = JSON.stringify(options.body);
-      opts.headers["Content-Type"] = "application/json";
-      opts.headers["Content-Length"] = Buffer.byteLength(bodyStr);
-    }
-
-    const req = https.request(opts, (res: any) => {
-      let data = "";
-      res.on("data", (chunk: string) => (data += chunk));
-      res.on("end", () => {
+    var req = mod.request(opts, function (res) {
+      var data = "";
+      res.on("data", function (chunk) {
+        data += chunk;
+      });
+      res.on("end", function () {
         try {
-          const parsed = JSON.parse(data);
-          if (res.statusCode >= 400) {
-            reject(new Error(parsed.message || `HTTP ${res.statusCode}`));
-          } else {
-            resolve(parsed);
-          }
+          var parsed = JSON.parse(data);
+          resolve({ status: res.statusCode, data: parsed });
         } catch {
-          reject(new Error(`Parse error: ${data.slice(0, 200)}`));
+          resolve({ status: res.statusCode, data: data });
         }
       });
     });
@@ -93,223 +79,483 @@ function ghApi(urlPath: string, options: Record<string, unknown> = {}): any {
   });
 }
 
+function getAuthHeaders() {
+  var config = loadConfig();
+  if (!config.api_key) {
+    console.error("Error: Not authenticated. Run: skill-sync auth <server-url> <api-key>");
+    process.exit(1);
+  }
+  return { Authorization: "Bearer " + config.api_key };
+}
+
+function getServerUrl() {
+  var config = loadConfig();
+  if (!config.server_url) {
+    console.error("Error: No server configured. Run: skill-sync auth <server-url> <api-key>");
+    process.exit(1);
+  }
+  return config.server_url.replace(/\/$/, "");
+}
+
+// ─── Checksum ───
+function computeChecksum(files) {
+  var content = files
+    .map(function (f) {
+      return f.filename + ":" + f.content;
+    })
+    .sort()
+    .join("\n");
+  return crypto.createHash("sha256").update(content).digest("hex").slice(0, 16);
+}
+
 // ─── Commands ───
 
-async function push(skillName: string, agent: string) {
-  const skillDir = path.join(AGENT_PATHS[agent], skillName);
-  if (!fs.existsSync(skillDir)) {
-    console.error(`Error: Skill directory not found: ${skillDir}`);
+async function auth(serverUrl, apiKey) {
+  var url = serverUrl.replace(/\/$/, "") + "/api/sync/status";
+  try {
+    var res = await httpRequest(url, {
+      headers: { Authorization: "Bearer " + apiKey },
+    });
+    if (res.status !== 200) {
+      console.error("Error: Invalid API key or server unreachable");
+      process.exit(1);
+    }
+  } catch (e) {
+    console.error("Error: Cannot connect to server: " + e.message);
     process.exit(1);
   }
 
-  const files = fs.readdirSync(skillDir);
-  const skillMdPath = path.join(skillDir, "SKILL.md");
-
-  if (!fs.existsSync(skillMdPath)) {
-    // Try lowercase
-    const altPath = path.join(skillDir, "skill.md");
-    if (!fs.existsSync(altPath)) {
-      console.error(`Error: No SKILL.md found in ${skillDir}`);
-      process.exit(1);
-    }
-  }
-
-  console.log(`Pushing ${skillName} (${agent})...`);
-
-  for (const file of files) {
-    const filePath = path.join(skillDir, file);
-    const stat = fs.statSync(filePath);
-    if (!stat.isFile()) continue;
-
-    const content = fs.readFileSync(filePath);
-    const base64 = content.toString("base64");
-    const repoPath = `skills/${skillName}/${file}`;
-
-    // Check if file exists to get SHA
-    let sha: string | undefined;
-    try {
-      const existing = await ghApi(repoPath);
-      sha = existing.sha;
-    } catch {
-      // File doesn't exist
-    }
-
-    const body: Record<string, unknown> = {
-      message: `Add/update ${skillName}/${file}`,
-      content: base64,
-      branch: "main",
-    };
-    if (sha) body.sha = sha;
-
-    await ghApi(repoPath, { method: "PUT", body });
-    console.log(`  ✓ ${file}`);
-  }
-
-  console.log(`Done! Pushed ${files.length} files for ${skillName}.`);
+  saveConfig({ server_url: serverUrl.replace(/\/$/, ""), api_key: apiKey });
+  console.log("✓ Credentials saved to ~/.skill-hub.json");
 }
 
-async function pull(skillName: string | undefined, agent: string) {
-  const targetDir = AGENT_PATHS[agent];
-  if (!fs.existsSync(targetDir)) {
-    fs.mkdirSync(targetDir, { recursive: true });
-  }
-
-  if (skillName) {
-    await pullOne(skillName, targetDir);
-  } else {
-    // Pull all skills
-    const listing = await ghApi("skills");
-    if (!Array.isArray(listing)) {
-      console.error("Error: Could not list skills");
-      process.exit(1);
-    }
-    for (const item of listing) {
-      if (item.type === "dir") {
-        await pullOne(item.name, targetDir);
-      }
-    }
-  }
-}
-
-async function pullOne(skillName: string, targetDir: string) {
-  const skillDir = path.join(targetDir, skillName);
+async function pushSkill(skillName, force) {
+  var skillDir = path.join(CLAUDE_SKILLS_DIR, skillName);
   if (!fs.existsSync(skillDir)) {
-    fs.mkdirSync(skillDir, { recursive: true });
+    console.error("Error: Skill directory not found: " + skillDir);
+    process.exit(1);
   }
 
-  console.log(`Pulling ${skillName}...`);
+  var files = [];
+  fs.readdirSync(skillDir).forEach(function (file) {
+    var filePath = path.join(skillDir, file);
+    var stat = fs.statSync(filePath);
+    if (stat.isFile()) {
+      files.push({ filename: file, content: fs.readFileSync(filePath, "utf-8") });
+    }
+  });
 
+  if (files.length === 0) {
+    console.error("Error: No files found in " + skillDir);
+    process.exit(1);
+  }
+
+  var checksum = computeChecksum(files);
+
+  // Load last known server checksum
+  var baseChecksum;
+  if (!force) {
+    var lockPath = path.join(CLAUDE_SKILLS_DIR, ".skills_store_lock.json");
+    try {
+      var lock = JSON.parse(fs.readFileSync(lockPath, "utf-8"));
+      if (lock.skills && lock.skills[skillName]) {
+        baseChecksum = lock.skills[skillName].server_checksum;
+      }
+    } catch {
+      // No lock file, first push
+    }
+  }
+
+  console.log("Pushing " + skillName + " (" + files.length + " files)...");
+
+  var url = getServerUrl() + "/api/sync/push";
+  var res = await httpRequest(url, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: {
+      slug: skillName,
+      files: files,
+      checksum: checksum,
+      base_checksum: baseChecksum,
+    },
+  });
+
+  if (res.status === 409) {
+    console.error("Conflict: Server version differs. Use --force to overwrite.");
+    process.exit(1);
+  }
+  if (res.status !== 200) {
+    console.error("Error: " + (res.data && res.data.error ? res.data.error : "HTTP " + res.status));
+    process.exit(1);
+  }
+
+  // Save server checksum for future sync
+  var lockPath2 = path.join(CLAUDE_SKILLS_DIR, ".skills_store_lock.json");
+  var lock2 = {};
   try {
-    const listing = await ghApi(`skills/${skillName}`);
-    if (!Array.isArray(listing)) {
-      console.log(`  Skipping (not a directory)`);
-      return;
-    }
-
-    for (const file of listing) {
-      if (file.type !== "file") continue;
-      const fileData = await ghApi(`skills/${skillName}/${file.name}`);
-      const content = Buffer.from(fileData.content, "base64");
-      fs.writeFileSync(path.join(skillDir, file.name), content);
-      console.log(`  ✓ ${file.name}`);
-    }
-  } catch (e: any) {
-    console.error(`  Error: ${e.message}`);
+    lock2 = JSON.parse(fs.readFileSync(lockPath2, "utf-8"));
+  } catch {
+    lock2 = { skills: {} };
   }
+  if (!lock2.skills) lock2.skills = {};
+  lock2.skills[skillName] = {
+    server_checksum: res.data.checksum,
+    last_sync: new Date().toISOString(),
+  };
+  fs.writeFileSync(lockPath2, JSON.stringify(lock2, null, 2));
+
+  console.log("✓ Pushed " + skillName + " (checksum: " + res.data.checksum + ")");
 }
 
-async function list(agent: string) {
+async function pushAll(force) {
+  if (!fs.existsSync(CLAUDE_SKILLS_DIR)) {
+    console.error("Error: No skills directory found at ~/.claude/skills/");
+    process.exit(1);
+  }
+
+  var dirs = fs.readdirSync(CLAUDE_SKILLS_DIR).filter(function (name) {
+    var p = path.join(CLAUDE_SKILLS_DIR, name);
+    return fs.statSync(p).isDirectory() && !name.startsWith(".");
+  });
+
+  if (dirs.length === 0) {
+    console.log("No skills found locally.");
+    return;
+  }
+
+  console.log("Pushing " + dirs.length + " skills...\n");
+  for (var i = 0; i < dirs.length; i++) {
+    try {
+      await pushSkill(dirs[i], force);
+    } catch (e) {
+      console.error("  ✗ " + dirs[i] + ": " + e.message);
+    }
+  }
+  console.log("\nDone!");
+}
+
+async function pullSkills(skillName) {
+  var serverUrl = getServerUrl();
+  var headers = getAuthHeaders();
+
+  // Get last sync timestamp
+  var since;
+  var lockPath = path.join(CLAUDE_SKILLS_DIR, ".skills_store_lock.json");
   try {
-    const listing = await ghApi("skills");
-    if (!Array.isArray(listing)) {
-      console.error("Error: Could not list skills");
-      process.exit(1);
+    var lock = JSON.parse(fs.readFileSync(lockPath, "utf-8"));
+    since = lock.last_full_sync;
+  } catch {
+    // No previous sync, pull everything
+  }
+
+  var url = serverUrl + "/api/sync/pull" + (since ? "?since=" + since : "");
+  var res = await httpRequest(url, { headers: headers });
+
+  if (res.status !== 200) {
+    console.error("Error: " + (res.data && res.data.error ? res.data.error : "HTTP " + res.status));
+    process.exit(1);
+  }
+
+  var changes = res.data.changes;
+  if (changes.length === 0) {
+    console.log("Already up to date.");
+    return;
+  }
+
+  // Filter by skill name if specified
+  var filtered = skillName ? changes.filter(function (c) { return c.slug === skillName; }) : changes;
+
+  if (skillName && filtered.length === 0) {
+    console.error('Error: Skill "' + skillName + '" not found on server.');
+    process.exit(1);
+  }
+
+  console.log("Pulling " + filtered.length + " skill(s)...\n");
+
+  if (!fs.existsSync(CLAUDE_SKILLS_DIR)) {
+    fs.mkdirSync(CLAUDE_SKILLS_DIR, { recursive: true });
+  }
+
+  for (var i = 0; i < filtered.length; i++) {
+    var change = filtered[i];
+    var skillDir = path.join(CLAUDE_SKILLS_DIR, change.slug);
+
+    if (change.action === "delete") {
+      if (fs.existsSync(skillDir)) {
+        fs.rmSync(skillDir, { recursive: true, force: true });
+        console.log("  ✓ Deleted " + change.slug);
+      }
+      continue;
     }
 
-    console.log(`\n  Skills in registry:\n`);
-    for (const item of listing) {
-      if (item.type === "dir") {
-        // Try to get SKILL.md for description
-        let desc = "";
-        try {
-          const skillMd = await ghApi(`skills/${item.name}/SKILL.md`);
-          const content = Buffer.from(skillMd.content, "base64").toString("utf-8");
-          const descMatch = content.match(/^description:\s*["']?(.+?)["']?\s*$/m);
-          if (descMatch) desc = descMatch[1];
-        } catch {
-          // skip
+    if (!fs.existsSync(skillDir)) {
+      fs.mkdirSync(skillDir, { recursive: true });
+    }
+
+    // Remove old files not in the new set
+    var newFilenames = new Set(change.files.map(function (f) { return f.filename; }));
+    fs.readdirSync(skillDir).forEach(function (existing) {
+      if (!newFilenames.has(existing)) {
+        fs.rmSync(path.join(skillDir, existing), { force: true });
+      }
+    });
+
+    for (var j = 0; j < change.files.length; j++) {
+      var file = change.files[j];
+      fs.writeFileSync(path.join(skillDir, file.filename), file.content, "utf-8");
+    }
+    console.log("  ✓ " + change.slug + " (" + change.files.length + " files)");
+  }
+
+  // Update sync cursor
+  var lock3 = {};
+  try {
+    lock3 = JSON.parse(fs.readFileSync(lockPath, "utf-8"));
+  } catch {
+    lock3 = { skills: {} };
+  }
+  lock3.last_full_sync = res.data.server_time;
+  for (var k = 0; k < filtered.length; k++) {
+    if (!lock3.skills) lock3.skills = {};
+    lock3.skills[filtered[k].slug] = {
+      server_checksum: filtered[k].checksum,
+      last_sync: res.data.server_time,
+    };
+  }
+  fs.writeFileSync(lockPath, JSON.stringify(lock3, null, 2));
+
+  console.log("\nDone!");
+}
+
+async function listSkills() {
+  var serverUrl = getServerUrl();
+  var res = await httpRequest(serverUrl + "/api/skills");
+
+  if (res.status !== 200) {
+    console.error("Error: " + (res.data && res.data.error ? res.data.error : "HTTP " + res.status));
+    process.exit(1);
+  }
+
+  var skills = res.data.skills;
+  if (!skills || skills.length === 0) {
+    console.log("No skills found on server.");
+    return;
+  }
+
+  console.log("\n  Skills on server (" + skills.length + "):\n");
+  console.log("  " + pad("Name", 25) + " " + pad("Slug", 20) + " Description");
+  console.log("  " + "─".repeat(25) + " " + "─".repeat(20) + " " + "─".repeat(40));
+  for (var i = 0; i < skills.length; i++) {
+    var skill = skills[i];
+    console.log(
+      "  " + pad(skill.name || "", 25) + " " + pad(skill.slug, 20) + " " + (skill.description || "").slice(0, 40)
+    );
+  }
+  console.log();
+}
+
+function pad(str, len) {
+  while (str.length < len) str += " ";
+  return str;
+}
+
+async function installSkill(skillName) {
+  console.log("Installing " + skillName + "...");
+  await pullSkills(skillName);
+  console.log("Installed to ~/.claude/skills/" + skillName + "/");
+}
+
+async function showStatus() {
+  var serverUrl = getServerUrl();
+  var headers = getAuthHeaders();
+  var res = await httpRequest(serverUrl + "/api/sync/status", { headers: headers });
+
+  if (res.status !== 200) {
+    console.error("Error: " + (res.data && res.data.error ? res.data.error : "HTTP " + res.status));
+    process.exit(1);
+  }
+
+  var d = res.data;
+  console.log("\n  Skill Hub Server: " + serverUrl);
+  console.log("  Skills:           " + d.skill_count);
+  console.log("  Last modified:    " + (d.last_modified || "never"));
+  console.log("  Server time:      " + d.server_time + "\n");
+}
+
+async function migrateFromGitHub(repo, token) {
+  if (!repo || !token) {
+    console.error("Usage: skill-sync migrate --from-github --repo <owner/repo> --token <gh-token>");
+    process.exit(1);
+  }
+
+  var serverUrl = getServerUrl();
+  var headers = getAuthHeaders();
+
+  console.log("Fetching skills from GitHub repo: " + repo + "...");
+
+  var ghRes = await httpRequest("https://api.github.com/repos/" + repo + "/contents/skills", {
+    headers: {
+      Authorization: "Bearer " + token,
+      Accept: "application/vnd.github.v3+json",
+      "User-Agent": "skill-sync",
+    },
+  });
+
+  if (ghRes.status !== 200 || !Array.isArray(ghRes.data)) {
+    console.error("Error: Could not list skills from GitHub");
+    process.exit(1);
+  }
+
+  var dirs = ghRes.data.filter(function (item) { return item.type === "dir"; });
+  console.log("Found " + dirs.length + " skill(s).\n");
+
+  for (var i = 0; i < dirs.length; i++) {
+    var slug = dirs[i].name;
+    console.log("  Migrating " + slug + "...");
+
+    var filesRes = await httpRequest(
+      "https://api.github.com/repos/" + repo + "/contents/skills/" + slug,
+      {
+        headers: {
+          Authorization: "Bearer " + token,
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "skill-sync",
+        },
+      }
+    );
+
+    if (filesRes.status !== 200 || !Array.isArray(filesRes.data)) {
+      console.error("    ✗ Could not list files for " + slug);
+      continue;
+    }
+
+    var files = [];
+    for (var j = 0; j < filesRes.data.length; j++) {
+      var f = filesRes.data[j];
+      if (f.type !== "file") continue;
+      var fileRes = await httpRequest(
+        "https://api.github.com/repos/" + repo + "/contents/skills/" + slug + "/" + f.name,
+        {
+          headers: {
+            Authorization: "Bearer " + token,
+            Accept: "application/vnd.github.v3+json",
+            "User-Agent": "skill-sync",
+          },
         }
-        console.log(`  ${item.name.padEnd(25)} ${desc.slice(0, 60)}`);
+      );
+      if (fileRes.status === 200 && fileRes.data.content) {
+        var content = Buffer.from(fileRes.data.content, "base64").toString("utf-8");
+        files.push({ filename: f.name, content: content });
       }
     }
-    console.log();
-  } catch (e: any) {
-    console.error(`Error: ${e.message}`);
-  }
-}
 
-async function install(skillName: string, agent: string) {
-  console.log(`Installing ${skillName} for ${agent}...`);
-  await pullOne(skillName, AGENT_PATHS[agent]);
-  console.log(`Done! Skill installed to ${AGENT_PATHS[agent]}/${skillName}`);
+    if (files.length === 0) {
+      console.error("    ✗ No files found for " + slug);
+      continue;
+    }
+
+    var checksum = computeChecksum(files);
+
+    var pushRes = await httpRequest(serverUrl + "/api/sync/push", {
+      method: "POST",
+      headers: headers,
+      body: { slug: slug, files: files, checksum: checksum },
+    });
+
+    if (pushRes.status === 200) {
+      console.log("    ✓ Migrated " + slug + " (" + files.length + " files)");
+    } else {
+      console.error("    ✗ Failed: " + (pushRes.data && pushRes.data.error ? pushRes.data.error : "HTTP " + pushRes.status));
+    }
+  }
+
+  console.log("\nMigration complete!");
 }
 
 // ─── CLI Router ───
 
-const args = process.argv.slice(2);
-const command = args[0];
+var args = process.argv.slice(2);
+var command = args[0];
 
-function getAgent(): string {
-  const idx = args.indexOf("--agent");
-  if (idx !== -1 && args[idx + 1]) return args[idx + 1];
-  return "claude"; // default
+function hasFlag(flag) {
+  return args.indexOf(flag) !== -1;
 }
 
-(async () => {
+function getOption(name) {
+  var idx = args.indexOf(name);
+  if (idx !== -1 && args[idx + 1]) return args[idx + 1];
+  return undefined;
+}
+
+(async function () {
   switch (command) {
     case "auth": {
-      const token = args[1];
-      if (!token) {
-        console.error("Usage: skill-sync auth <github-token>");
+      var serverUrl = args[1];
+      var apiKey = args[2];
+      if (!serverUrl || !apiKey) {
+        console.error("Usage: skill-sync auth <server-url> <api-key>");
         process.exit(1);
       }
-      const config = loadConfig();
-      config.github_token = token;
-      saveConfig(config);
-      console.log("Token saved to ~/.skill-hub.json");
-      break;
-    }
-    case "config": {
-      const key = args[1];
-      const value = args[2];
-      if (!key || !value) {
-        console.error("Usage: skill-sync config <key> <value>");
-        console.error("  Keys: repo");
-        process.exit(1);
-      }
-      const config = loadConfig();
-      config[key] = value;
-      saveConfig(config);
-      console.log(`Set ${key} = ${value}`);
+      await auth(serverUrl, apiKey);
       break;
     }
     case "push": {
-      const name = args[1];
-      if (!name) {
-        console.error("Usage: skill-sync push <skill-name> [--agent claude|hermes]");
-        process.exit(1);
+      if (hasFlag("--all")) {
+        await pushAll(hasFlag("--force"));
+      } else {
+        var name = args[1];
+        if (!name || name.startsWith("-")) {
+          console.error("Usage: skill-sync push <skill-name> [--force]");
+          console.error("       skill-sync push --all [--force]");
+          process.exit(1);
+        }
+        await pushSkill(name, hasFlag("--force"));
       }
-      await push(name, getAgent());
       break;
     }
     case "pull": {
-      await pull(args[1], getAgent());
+      var skillName = args[1] && !args[1].startsWith("-") ? args[1] : undefined;
+      await pullSkills(skillName);
       break;
     }
     case "list": {
-      await list(getAgent());
+      await listSkills();
       break;
     }
     case "install": {
-      const name = args[1];
-      if (!name) {
-        console.error("Usage: skill-sync install <skill-name> --agent <claude|hermes>");
+      var installName = args[1];
+      if (!installName) {
+        console.error("Usage: skill-sync install <skill-name>");
         process.exit(1);
       }
-      await install(name, getAgent());
+      await installSkill(installName);
+      break;
+    }
+    case "status": {
+      await showStatus();
+      break;
+    }
+    case "migrate": {
+      if (hasFlag("--from-github")) {
+        await migrateFromGitHub(getOption("--repo"), getOption("--token"));
+      } else {
+        console.error("Usage: skill-sync migrate --from-github --repo <owner/repo> --token <gh-token>");
+        process.exit(1);
+      }
       break;
     }
     default:
-      console.log(`
-  skill-sync — AI Skill Registry CLI
-
-  Commands:
-    auth <token>                        Save GitHub token
-    config repo <owner/repo>            Set GitHub repo
-    push <name> [--agent <agent>]       Upload local skill to repo
-    pull [name] [--agent <agent>]       Download skill(s) from repo
-    list [--agent <agent>]              List all skills in repo
-    install <name> --agent <agent>      Install a skill locally
-      `);
+      console.log(
+        "\n  skill-sync — Skill Hub CLI v2.0\n" +
+          "\n  Commands:\n" +
+          "    auth <server-url> <api-key>                     Save credentials\n" +
+          "    push <name> [--force]                           Push skill to server\n" +
+          "    push --all [--force]                            Push all local skills\n" +
+          "    pull [name]                                     Pull skill(s) from server\n" +
+          "    list                                            List skills on server\n" +
+          "    install <name>                                  Install skill locally\n" +
+          "    status                                          Show server status\n" +
+          "    migrate --from-github --repo <r> --token <t>    Import from GitHub\n"
+      );
   }
 })();

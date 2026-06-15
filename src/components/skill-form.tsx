@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { X, Upload, FileText } from "lucide-react";
+import { X, FileText } from "lucide-react";
 import { TagInput } from "./tag-input";
 import type { AgentType, CreateSkillInput } from "@/lib/types";
 
@@ -12,6 +12,8 @@ interface SkillFormProps {
   mode: "create" | "edit";
   onSubmit: (data: CreateSkillInput) => Promise<void>;
 }
+
+const INPUT_CLASS = "w-full rounded-xl border border-white/[0.08] bg-white/[0.03] px-3.5 py-2.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-indigo-500/50 focus:bg-white/[0.05] focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all duration-200";
 
 export function SkillForm({ open, onClose, initial, mode, onSubmit }: SkillFormProps) {
   const [name, setName] = useState(initial?.name || "");
@@ -39,7 +41,7 @@ export function SkillForm({ open, onClose, initial, mode, onSubmit }: SkillFormP
       await onSubmit({ name, slug, description, triggers, agent, content });
       onClose();
     } catch (err) {
-      setError(String(err));
+      setError(err instanceof Error ? err.message : "An unexpected error occurred");
     } finally {
       setLoading(false);
     }
@@ -48,8 +50,8 @@ export function SkillForm({ open, onClose, initial, mode, onSubmit }: SkillFormP
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 backdrop-blur-sm pt-8 pb-8">
-      <div className="w-full max-w-2xl rounded-xl border border-white/[0.08] bg-[#111118] shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 backdrop-blur-sm pt-8 pb-8 animate-fade-in">
+      <div className="w-full max-w-2xl rounded-2xl border border-white/[0.08] bg-[#111118] shadow-2xl animate-scale-in">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-white/[0.06] px-6 py-4">
           <h2 className="text-lg font-semibold text-white">
@@ -57,7 +59,7 @@ export function SkillForm({ open, onClose, initial, mode, onSubmit }: SkillFormP
           </h2>
           <button
             onClick={onClose}
-            className="rounded-lg p-1.5 text-zinc-500 hover:text-white hover:bg-white/5 transition-colors"
+            className="rounded-xl p-2 text-zinc-500 hover:text-white hover:bg-white/[0.06] transition-all duration-200"
             aria-label="Close"
           >
             <X className="h-5 w-5" />
@@ -78,7 +80,7 @@ export function SkillForm({ open, onClose, initial, mode, onSubmit }: SkillFormP
                 onChange={(e) => handleNameChange(e.target.value)}
                 placeholder="My Awesome Skill"
                 required
-                className="w-full rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-indigo-500/40 focus:outline-none focus:ring-1 focus:ring-indigo-500/40"
+                className={INPUT_CLASS}
               />
             </div>
             <div>
@@ -92,7 +94,7 @@ export function SkillForm({ open, onClose, initial, mode, onSubmit }: SkillFormP
                 placeholder="my-awesome-skill"
                 required
                 spellCheck={false}
-                className="w-full rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-sm font-mono text-zinc-200 placeholder:text-zinc-600 focus:border-indigo-500/40 focus:outline-none focus:ring-1 focus:ring-indigo-500/40"
+                className={`${INPUT_CLASS} font-mono`}
               />
             </div>
           </div>
@@ -108,7 +110,7 @@ export function SkillForm({ open, onClose, initial, mode, onSubmit }: SkillFormP
               onChange={(e) => setDescription(e.target.value)}
               placeholder="What this skill does..."
               required
-              className="w-full rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-indigo-500/40 focus:outline-none focus:ring-1 focus:ring-indigo-500/40"
+              className={INPUT_CLASS}
             />
           </div>
 
@@ -129,10 +131,10 @@ export function SkillForm({ open, onClose, initial, mode, onSubmit }: SkillFormP
               {(["claude", "hermes", "both"] as const).map((a) => (
                 <label
                   key={a}
-                  className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm cursor-pointer transition-colors ${
+                  className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm cursor-pointer transition-all duration-200 ${
                     agent === a
-                      ? "border-indigo-500/40 bg-indigo-500/10 text-white"
-                      : "border-white/[0.06] text-zinc-500 hover:border-white/[0.12]"
+                      ? "border-indigo-500/40 bg-indigo-500/10 text-white shadow-sm shadow-indigo-500/10"
+                      : "border-white/[0.06] text-zinc-500 hover:border-white/[0.12] hover:bg-white/[0.03]"
                   }`}
                 >
                   <input
@@ -162,7 +164,7 @@ export function SkillForm({ open, onClose, initial, mode, onSubmit }: SkillFormP
                 required
                 rows={12}
                 spellCheck={false}
-                className="w-full rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-sm font-mono text-zinc-200 placeholder:text-zinc-600 focus:border-indigo-500/40 focus:outline-none focus:ring-1 focus:ring-indigo-500/40 resize-y"
+                className={`${INPUT_CLASS} font-mono resize-y min-h-[200px]`}
               />
             </div>
             <p className="mt-1.5 text-xs text-zinc-600 flex items-center gap-1.5">
@@ -173,7 +175,7 @@ export function SkillForm({ open, onClose, initial, mode, onSubmit }: SkillFormP
 
           {/* Error */}
           {error && (
-            <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-2 text-sm text-red-400">
+            <div className="rounded-xl border border-red-500/20 bg-red-500/[0.08] px-4 py-2.5 text-sm text-red-400 animate-scale-in">
               {error}
             </div>
           )}
@@ -183,14 +185,14 @@ export function SkillForm({ open, onClose, initial, mode, onSubmit }: SkillFormP
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg border border-white/[0.08] px-4 py-2 text-sm text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+              className="rounded-xl border border-white/[0.08] px-4 py-2 text-sm text-zinc-400 hover:text-white hover:bg-white/[0.06] hover:border-white/[0.12] transition-all duration-200"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={loading}
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+              className="rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 px-5 py-2 text-sm font-medium text-white hover:from-indigo-500 hover:to-indigo-400 shadow-lg shadow-indigo-500/20 disabled:shadow-none disabled:opacity-50 transition-all duration-200"
             >
               {loading
                 ? "Saving..."

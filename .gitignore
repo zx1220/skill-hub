@@ -32,6 +32,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+
+# runtime data (database, master key, uploaded files)
+/data/
 
 # vercel
 .vercel
@@ -39,3 +43,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Claude Code local state (scheduled tasks, etc.)
+.claude/
+
+# bun-only project: do not commit npm lock file
+package-lock.json

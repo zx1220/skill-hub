@@ -1,3 +1,5 @@
+import { join } from "path";
+
 export const AGENT_COLORS = {
   claude: {
     bg: "rgba(168,85,247,0.12)",
@@ -26,13 +28,26 @@ export const AGENT_INSTALL_PATHS = {
 
 export const AGENT_TYPES = ["claude", "hermes", "both"] as const;
 
+export const DB_CONFIG = {
+  /** SQLite database file path */
+  dbPath: process.env.SKILL_DB_PATH || join(process.cwd(), "data", "skill-hub.db"),
+  /** Skill files storage directory */
+  dataDir: process.env.SKILL_DATA_DIR || join(process.cwd(), "data", "skills"),
+  /** Master API key file */
+  masterKeyPath: process.env.SKILL_MASTER_KEY_PATH || join(process.cwd(), "data", ".master-key"),
+} as const;
+
 export const GITHUB_CONFIG = {
   repo: process.env.SKILL_REPO || "",
   branch: process.env.SKILL_BRANCH || "main",
   token: process.env.GITHUB_TOKEN || "",
 } as const;
 
+export const AI_CONFIG = {
+  apiKey: process.env.ANTHROPIC_API_KEY || "",
+} as const;
+
 export const SITE_CONFIG = {
   name: "Skill Hub",
-  description: "AI Skill Registry — manage, discover, and install skills for Claude Code & Hermes",
+  description: "AI Skill Registry — manage, discover, and sync skills for Claude Code & Hermes",
 } as const;

@@ -1,0 +1,19 @@
+services:
+  skill-hub:
+    image: skill-hub:latest
+    container_name: skill-hub
+    ports:
+      - "3001:3000"
+    volumes:
+      - skill-hub-data:/app/data
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - SKILL_DB_PATH=/app/data/skill-hub.db
+      - SKILL_DATA_DIR=/app/data/skills
+      - SKILL_MASTER_KEY_PATH=/app/data/.master-key
+    restart: unless-stopped
+
+volumes:
+  skill-hub-data:
