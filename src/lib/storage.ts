@@ -292,20 +292,18 @@ export function upsertSkillFiles(
   transaction();
 
   // Sync to filesystem
+  const dir = skillDir(slug);
   ensureSkillDir(slug);
-  // Remove old files not in the new set
-  const existingFiles = readdirSync(skillDir(slug));
-  const newFilenames = new Set(files.map((f) => f.filename));
-  for (const ef of existingFiles) {
-    if (!newFilenames.has(ef)) {
-      rmSync(join(skillDir(slug), ef), { force: true });
-    }
+  // Wipe existing top-level entries (files and subdirectories) so a re-upload
+  // that changes structure (flat <-> nested) leaves no stale files behind.
+  for (const ef of readdirSync(dir)) {
+    rmSync(join(dir, ef), { recursive: true, force: true });
   }
   // Write new files (ensure subdirectories exist)
   for (const file of files) {
-    const filePath = join(skillDir(slug), file.filename);
-    const dir = dirname(filePath);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const filePath = join(dir, file.filename);
+    const fileDir = dirname(filePath);
+    if (!existsSync(fileDir)) mkdirSync(fileDir, { recursive: true });
     writeFileSync(filePath, file.content, "utf-8");
   }
 

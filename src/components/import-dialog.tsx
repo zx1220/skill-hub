@@ -92,6 +92,22 @@ export function ImportDialog({ open, onClose, onImported }: ImportDialogProps) {
 
 // ─── Upload Tab (single file + folder) ───
 
+// Common binary file extensions — skipped to honor text-only uploads
+const BINARY_EXTS = new Set([
+  "png", "jpg", "jpeg", "gif", "ico", "bmp", "webp", "tiff", "heic",
+  "mp3", "mp4", "wav", "avi", "mov", "mkv", "flv", "webm", "ogg",
+  "zip", "tar", "gz", "rar", "7z", "bz2",
+  "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+  "exe", "dll", "so", "dylib", "bin", "class", "jar", "wasm",
+  "ttf", "otf", "woff", "woff2", "eot",
+  "db", "sqlite", "sqlite3",
+]);
+
+function isLikelyBinary(filePath: string): boolean {
+  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+  return BINARY_EXTS.has(ext);
+}
+
 function UploadTab({
   onError,
   onSuccess,
@@ -108,6 +124,7 @@ function UploadTab({
 
   const processEntries = useCallback((entries: { file: File; relativePath: string }[]) => {
     const display: { name: string; size: number; path: string }[] = [];
+    const kept: { file: File; relativePath: string }[] = [];
     let topFolder = "";
 
     for (const { file: f, relativePath } of entries) {
@@ -117,15 +134,17 @@ function UploadTab({
         topFolder = parts[0];
       }
 
-      // Skip hidden files
+      // Skip hidden files and binary files (text-only uploads)
       if (parts.some((p) => p.startsWith("."))) continue;
+      if (isLikelyBinary(relativePath)) continue;
 
       display.push({ name: f.name, size: f.size, path: relativePath });
+      kept.push({ file: f, relativePath });
     }
 
     setFolderName(topFolder);
     setFiles(display);
-    setStoredFiles(entries.filter(({ relativePath }) => !relativePath.split("/").some((p) => p.startsWith("."))));
+    setStoredFiles(kept);
     onError("");
   }, [onError]);
 
@@ -174,6 +193,7 @@ function UploadTab({
 
     try {
       const formData = new FormData();
+      const paths: string[] = [];
 
       for (const { file: f, relativePath } of storedFiles) {
         const parts = relativePath.split("/");
@@ -181,7 +201,16 @@ function UploadTab({
 
         const localPath = parts.length > 1 ? parts.slice(1).join("/") : f.name;
         formData.append("files", f, localPath);
+        paths.push(localPath);
       }
+
+      if (paths.length === 0) {
+        onError("没有可上传的文本文件");
+        return;
+      }
+      // Explicit relative paths, aligned with `files` by index, so the server
+      // can preserve subdirectory structure without relying on multipart filename parsing.
+      formData.append("paths", JSON.stringify(paths));
 
       if (folderName) {
         const slug = folderName.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
@@ -230,8 +259,8 @@ function UploadTab({
         <input
           ref={inputRef}
           type="file"
-          accept=".md,.markdown,.txt,.js,.ts,.py,.json,.yaml,.yml"
           multiple
+          {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
           onChange={(e) => {
             if (e.target.files && e.target.files.length > 0) {
               handleInputChange(Array.from(e.target.files));
@@ -262,9 +291,9 @@ function UploadTab({
           <div>
             <Upload className="h-8 w-8 text-zinc-500 mx-auto mb-3" />
             <p className="text-sm text-zinc-400">
-              Drop a <span className="text-indigo-400">file</span> or <span className="text-indigo-400">folder</span> here, or click to browse
+              点击选择 <span className="text-indigo-400">技能文件夹</span>,或拖拽文件/文件夹到此处
             </p>
-            <p className="text-xs text-zinc-600 mt-1">Supports .md, .js, .ts, .py, .json, .yaml files</p>
+            <p className="text-xs text-zinc-600 mt-1">自动保留子目录结构,仅上传文本文件</p>
           </div>
         )}
       </div>

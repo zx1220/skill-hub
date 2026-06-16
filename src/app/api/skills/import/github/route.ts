@@ -12,31 +12,46 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json() as ImportGitHubRequest;
-    let { branch } = body;
+    let branch = body.branch;
     const token = body.token || GITHUB_CONFIG.token;
-    let repo = (body.repo || "").trim();
+    const rawInput = (body.repo || "").trim();
 
-    if (!repo) {
+    if (!rawInput) {
       return Response.json({ error: "Repository is required (format: owner/repo)" }, { status: 400 });
     }
 
-    // Extract owner/repo from full GitHub URL if user pastes one
-    const urlMatch = repo.match(/github\.com\/([^/]+\/[^/\s]+)/);
-    if (urlMatch) {
-      repo = urlMatch[1].replace(/\.git$/, "");
+    // Strip query/hash/.git so URL parsing is clean.
+    const input = rawInput.split("?")[0].split("#")[0].replace(/\.git$/, "");
+
+    let repo = "";
+    let subPath = "";
+
+    // Full URL with a tree path: github.com/owner/repo/tree/<branch>/<path>
+    // → import only the skill at <path> using that branch.
+    let m = input.match(/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.+)$/);
+    if (m) {
+      repo = `${m[1]}/${m[2]}`;
+      branch = branch || decodeURIComponent(m[3]);
+      subPath = decodeURIComponent(m[4]).replace(/^\/+|\/+$/g, "");
+    } else {
+      // github.com/owner/repo  OR  owner/repo[/optional/sub/path]
+      m = input.match(/(?:github\.com\/)?([^/\s]+)\/([^/\s]+)(?:\/(.+))?$/);
+      if (m) {
+        repo = `${m[1]}/${m[2]}`;
+        if (m[3]) subPath = m[3].replace(/^\/+|\/+$/g, "");
+      }
     }
 
-    // Validate repo format
-    const repoParts = repo.split("/");
-    if (repoParts.length !== 2 || !repoParts[0] || !repoParts[1]) {
+    if (!repo) {
       return Response.json({ error: "Invalid repo format. Use: owner/repo or full GitHub URL" }, { status: 400 });
     }
 
     // Token is optional for public repos
     const effectiveBranch = branch || GITHUB_CONFIG.branch || "main";
 
-    // Fetch all skills from the repo
-    const skills = await fetchSkillsFromRepo(repo, token, effectiveBranch);
+    // subPath narrows the import to a single skill directory when the user
+    // pointed at one (e.g. .../tree/main/skills/mcp-builder).
+    const skills = await fetchSkillsFromRepo(repo, token, effectiveBranch, subPath);
 
     if (skills.length === 0) {
       return Response.json(

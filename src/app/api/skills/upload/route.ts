@@ -40,12 +40,24 @@ export async function POST(request: Request) {
         .replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
     }
 
-    // Read all files
+    // Relative paths aligned with files by index (JSON array sent by the client),
+    // so subdirectory structure is preserved (e.g. "scripts/run.py").
+    const pathsRaw = formData.get("paths") as string | null;
+    let paths: string[] = [];
+    if (pathsRaw) {
+      try {
+        paths = JSON.parse(pathsRaw) as string[];
+      } catch {
+        paths = [];
+      }
+    }
+
+    // Read all files, preserving relative paths when provided
     const skillFiles: SkillFile[] = [];
-    for (const f of allFiles) {
+    for (let i = 0; i < allFiles.length; i++) {
+      const f = allFiles[i];
       const content = await f.text();
-      // Use filename directly; for webkitRelativePath, extract just the filename
-      const filename = f.name;
+      const filename = sanitizeRelPath(paths[i] || f.name);
       skillFiles.push({ filename, content });
     }
 
@@ -83,4 +95,17 @@ function extractFrontmatter(content: string): { name: string; description: strin
     name: nameMatch?.[1]?.trim() || "",
     description: descMatch?.[1]?.trim() || "",
   };
+}
+
+/**
+ * Normalize a relative path from an upload: convert backslashes, drop leading
+ * slashes, and filter out empty / hidden / traversal segments so files are never
+ * written outside the skill directory (uploads come from untrusted clients).
+ */
+function sanitizeRelPath(p: string): string {
+  const norm = p.replace(/\\/g, "/").replace(/^\/+/, "");
+  return norm
+    .split("/")
+    .filter((seg) => seg.length > 0 && !seg.startsWith("."))
+    .join("/");
 }

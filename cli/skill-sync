@@ -108,6 +108,32 @@ function computeChecksum(files) {
   return crypto.createHash("sha256").update(content).digest("hex").slice(0, 16);
 }
 
+// Recursively collect files under `dir`, returning { filename, content } where
+// filename is relative to the original base dir (POSIX slashes); hidden entries skipped.
+function collectSkillFiles(dir, base) {
+  base = base || dir;
+  var result = [];
+  var entries;
+  try {
+    entries = fs.readdirSync(dir);
+  } catch (e) {
+    return result;
+  }
+  for (var i = 0; i < entries.length; i++) {
+    var name = entries[i];
+    if (name.startsWith(".")) continue;
+    var full = path.join(dir, name);
+    var stat = fs.statSync(full);
+    if (stat.isDirectory()) {
+      result = result.concat(collectSkillFiles(full, base));
+    } else if (stat.isFile()) {
+      var rel = path.relative(base, full).split(path.sep).join("/");
+      result.push({ filename: rel, content: fs.readFileSync(full, "utf-8") });
+    }
+  }
+  return result;
+}
+
 // ─── Commands ───
 
 async function auth(serverUrl, apiKey) {
@@ -136,14 +162,7 @@ async function pushSkill(skillName, force) {
     process.exit(1);
   }
 
-  var files = [];
-  fs.readdirSync(skillDir).forEach(function (file) {
-    var filePath = path.join(skillDir, file);
-    var stat = fs.statSync(filePath);
-    if (stat.isFile()) {
-      files.push({ filename: file, content: fs.readFileSync(filePath, "utf-8") });
-    }
-  });
+  var files = collectSkillFiles(skillDir);
 
   if (files.length === 0) {
     console.error("Error: No files found in " + skillDir);
@@ -292,17 +311,18 @@ async function pullSkills(skillName) {
       fs.mkdirSync(skillDir, { recursive: true });
     }
 
-    // Remove old files not in the new set
-    var newFilenames = new Set(change.files.map(function (f) { return f.filename; }));
+    // Wipe existing contents (files and subdirs) so stale entries don't survive a
+    // structural change, then write the fresh full file set with subdirectories.
     fs.readdirSync(skillDir).forEach(function (existing) {
-      if (!newFilenames.has(existing)) {
-        fs.rmSync(path.join(skillDir, existing), { force: true });
-      }
+      fs.rmSync(path.join(skillDir, existing), { recursive: true, force: true });
     });
 
     for (var j = 0; j < change.files.length; j++) {
       var file = change.files[j];
-      fs.writeFileSync(path.join(skillDir, file.filename), file.content, "utf-8");
+      if (file.filename.indexOf("..") !== -1) continue; // basic path-traversal guard
+      var filePath = path.join(skillDir, file.filename);
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, file.content, "utf-8");
     }
     console.log("  ✓ " + change.slug + " (" + change.files.length + " files)");
   }
