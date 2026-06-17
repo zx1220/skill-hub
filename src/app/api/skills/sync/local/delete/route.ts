@@ -8,7 +8,7 @@ import { join, resolve } from "path";
 /** POST: Delete selected local skill folders */
 export async function POST(request: Request) {
   try {
-    if (!isAuthenticated(request)) {
+    if (!(await isAuthenticated(request))) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 

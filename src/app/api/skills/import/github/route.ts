@@ -7,7 +7,7 @@ import type { ImportGitHubRequest, ImportResult } from "@/lib/types";
 
 export async function POST(request: Request) {
   try {
-    if (!isAuthenticated(request)) {
+    if (!(await isAuthenticated(request))) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -65,7 +65,7 @@ export async function POST(request: Request) {
 
     for (const skill of skills) {
       try {
-        upsertSkillFiles(
+        await upsertSkillFiles(
           skill.slug,
           skill.name,
           skill.description,

@@ -10,23 +10,25 @@ export function generateApiKey(): string {
   return randomBytes(24).toString("hex");
 }
 
-/** Get or create the master API key */
-export function getMasterKey(): string {
-  const keyPath = DB_CONFIG.masterKeyPath;
+/** Get the master API key: env var first (serverless), then local file fallback. */
+export async function getMasterKey(): Promise<string> {
+  // 1) Environment variable — required for serverless (read-only FS)
+  if (process.env.SKILL_MASTER_KEY) {
+    return process.env.SKILL_MASTER_KEY;
+  }
 
+  // 2) Local file fallback (Docker / local dev)
+  const keyPath = DB_CONFIG.masterKeyPath;
   if (existsSync(keyPath)) {
     return readFileSync(keyPath, "utf-8").trim();
   }
 
-  // Generate new master key
+  // 3) Local dev first run: generate and persist
   const key = generateApiKey();
-
-  // Ensure directory exists
   const dir = dirname(keyPath);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-
   writeFileSync(keyPath, key, "utf-8");
   console.log(`\n🔑 Master API Key generated: ${key}`);
   console.log(`   Saved to: ${keyPath}\n`);
@@ -34,9 +36,9 @@ export function getMasterKey(): string {
 }
 
 /** Validate an API key against the master key (timing-safe) */
-export function validateApiKey(key: string): boolean {
+export async function validateApiKey(key: string): Promise<boolean> {
   if (!key) return false;
-  const masterKey = getMasterKey();
+  const masterKey = await getMasterKey();
   if (key.length !== masterKey.length) return false;
   return timingSafeEqual(Buffer.from(key), Buffer.from(masterKey));
 }
@@ -60,7 +62,7 @@ export function extractApiKey(request: Request): string | null {
 }
 
 /** Check if request is authenticated */
-export function isAuthenticated(request: Request): boolean {
+export async function isAuthenticated(request: Request): Promise<boolean> {
   const key = extractApiKey(request);
   if (!key) return false;
   return validateApiKey(key);
@@ -71,7 +73,7 @@ export function withAuth(
   handler: (request: Request, context: { params: Promise<Record<string, string>> }) => Promise<Response>
 ): (request: Request, context: { params: Promise<Record<string, string>> }) => Promise<Response> {
   return async (request, context) => {
-    if (!isAuthenticated(request)) {
+    if (!(await isAuthenticated(request))) {
       return Response.json({ error: "Unauthorized. Provide API key via Authorization header or login." }, { status: 401 });
     }
     return handler(request, context);
@@ -83,7 +85,7 @@ export function withAuthSimple(
   handler: (request: Request) => Promise<Response>
 ): (request: Request) => Promise<Response> {
   return async (request) => {
-    if (!isAuthenticated(request)) {
+    if (!(await isAuthenticated(request))) {
       return Response.json({ error: "Unauthorized. Provide API key via Authorization header or login." }, { status: 401 });
     }
     return handler(request);

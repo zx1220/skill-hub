@@ -1,95 +1,96 @@
-import Database from "better-sqlite3";
-import { mkdirSync, existsSync } from "fs";
-import { dirname, join } from "path";
-import { DB_CONFIG } from "./constants";
+import { createClient, type Client } from "@libsql/client";
 
-let db: Database.Database | null = null;
+// libSQL (Turso) client. Pure-JS, serverless friendly.
+// - Production: TURSO_DATABASE_URL + TURSO_AUTH_TOKEN (remote Turso DB)
+// - Local dev fallback: file:./data/local.db
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS skills (
-  slug        TEXT PRIMARY KEY,
-  name        TEXT NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  version     TEXT NOT NULL DEFAULT '1.0.0',
-  agent       TEXT NOT NULL DEFAULT 'claude',
-  triggers    TEXT NOT NULL DEFAULT '[]',
-  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
-  checksum    TEXT NOT NULL DEFAULT ''
-);
+let clientPromise: Promise<Client> | null = null;
 
-CREATE TABLE IF NOT EXISTS skill_files (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  skill_slug  TEXT NOT NULL REFERENCES skills(slug) ON DELETE CASCADE,
-  filename    TEXT NOT NULL,
-  content     TEXT NOT NULL,
-  updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE(skill_slug, filename)
-);
+const SCHEMA_STMTS = [
+  `CREATE TABLE IF NOT EXISTS skills (
+    slug        TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    version     TEXT NOT NULL DEFAULT '1.0.0',
+    agent       TEXT NOT NULL DEFAULT 'claude',
+    triggers    TEXT NOT NULL DEFAULT '[]',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    checksum    TEXT NOT NULL DEFAULT '',
+    category    TEXT DEFAULT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS skill_files (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    skill_slug  TEXT NOT NULL REFERENCES skills(slug) ON DELETE CASCADE,
+    filename    TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(skill_slug, filename)
+  )`,
+  `CREATE TABLE IF NOT EXISTS sync_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    skill_slug  TEXT NOT NULL,
+    action      TEXT NOT NULL,
+    timestamp   TEXT NOT NULL DEFAULT (datetime('now')),
+    device_id   TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS categories (
+    name       TEXT PRIMARY KEY,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_sync_log_timestamp ON sync_log(timestamp)`,
+  `CREATE INDEX IF NOT EXISTS idx_skill_files_slug ON skill_files(skill_slug)`,
+];
 
-CREATE TABLE IF NOT EXISTS sync_log (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  skill_slug  TEXT NOT NULL,
-  action      TEXT NOT NULL,
-  timestamp   TEXT NOT NULL DEFAULT (datetime('now')),
-  device_id   TEXT
-);
+const DEFAULT_CATEGORIES = [
+  "工作流引擎",
+  "后端开发",
+  "前端开发",
+  "内容创作",
+  "工具类",
+  "咨询获取类",
+];
 
-CREATE INDEX IF NOT EXISTS idx_sync_log_timestamp ON sync_log(timestamp);
-CREATE INDEX IF NOT EXISTS idx_skill_files_slug ON skill_files(skill_slug);
-`;
+/**
+ * Get the libSQL client singleton, initializing schema + default categories on
+ * first connect. Module-level Promise cache avoids concurrent first-call races
+ * and lets warm serverless instances reuse the connection.
+ */
+export function getClient(): Promise<Client> {
+  if (clientPromise) return clientPromise;
 
-export function getDb(): Database.Database {
-  if (db) return db;
+  clientPromise = (async () => {
+    const url = process.env.TURSO_DATABASE_URL || process.env.SKILL_DB_URL;
+    const authToken = process.env.TURSO_AUTH_TOKEN;
 
-  // Ensure data directory exists
-  const dataDir = dirname(DB_CONFIG.dbPath);
-  if (!existsSync(dataDir)) {
-    mkdirSync(dataDir, { recursive: true });
-  }
+    const client = createClient(
+      url ? { url, authToken } : { url: "file:./data/local.db" }
+    );
 
-  // Ensure skills storage directory exists
-  if (!existsSync(DB_CONFIG.dataDir)) {
-    mkdirSync(DB_CONFIG.dataDir, { recursive: true });
-  }
+    // Full schema (idempotent). `category` column + `categories` table are
+    // baked in — no runtime migration needed for fresh Turso/local databases.
+    await client.batch(SCHEMA_STMTS.map((sql) => ({ sql })));
 
-  db = new Database(DB_CONFIG.dbPath);
+    // Seed default categories only when the table is empty.
+    const { rows } = await client.execute("SELECT COUNT(*) as c FROM categories");
+    if (Number((rows[0] as unknown as { c?: number }).c ?? 0) === 0) {
+      await client.batch(
+        DEFAULT_CATEGORIES.map((name, i) => ({
+          sql: "INSERT INTO categories (name, sort_order) VALUES (?, ?)",
+          args: [name, i],
+        })),
+        "write"
+      );
+    }
 
-  // WAL mode for better concurrent read performance
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
+    console.log(`[skill-hub] Database ready (${url ? "remote Turso" : "local file"})`);
+    return client;
+  })().catch((e) => {
+    // Reset so a later call can retry after a transient failure.
+    clientPromise = null;
+    throw e;
+  });
 
-  // Initialize schema
-  db.exec(SCHEMA);
-
-  // Migrations: add category column if missing
-  const cols = db.pragma("table_info(skills)") as Array<{ name: string }>;
-  if (!cols.some((c) => c.name === "category")) {
-    db.exec("ALTER TABLE skills ADD COLUMN category TEXT DEFAULT NULL");
-  }
-
-  // Migration: add categories table if missing
-  const catCols = db.pragma("table_info(categories)") as Array<{ name: string }>;
-  if (catCols.length === 0) {
-    db.exec(`CREATE TABLE IF NOT EXISTS categories (
-      name       TEXT PRIMARY KEY,
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )`);
-    // Seed default categories
-    const seed = db.prepare("INSERT INTO categories (name, sort_order) VALUES (?, ?)");
-    const defaults = ["工作流引擎", "后端开发", "前端开发", "内容创作", "工具类", "咨询获取类"];
-    defaults.forEach((name, i) => seed.run(name, i));
-    console.log("[skill-hub] Categories table created with default seed");
-  }
-
-  return db;
-}
-
-/** Close database connection (for graceful shutdown) */
-export function closeDb(): void {
-  if (db) {
-    db.close();
-    db = null;
-  }
+  return clientPromise;
 }

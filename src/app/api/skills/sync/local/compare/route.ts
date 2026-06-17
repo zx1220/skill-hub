@@ -7,7 +7,7 @@ import type { LocalSyncAgent, LocalSyncCompareResponse } from "@/lib/types";
 /** POST: Compare Hub skills vs local skills for a given agent */
 export async function POST(request: Request) {
   try {
-    if (!isAuthenticated(request)) {
+    if (!(await isAuthenticated(request))) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -19,7 +19,7 @@ export async function POST(request: Request) {
     }
 
     // Get Hub skills relevant to this agent
-    const allHubSkills = listSkills();
+    const allHubSkills = await listSkills();
     const hubSkills = allHubSkills.filter(
       (s) => s.agent === agent || s.agent === "both"
     );

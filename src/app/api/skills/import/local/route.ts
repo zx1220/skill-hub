@@ -9,7 +9,7 @@ import { join } from "path";
 /** GET: Scan local filesystem for installed skills */
 export async function GET(request: Request) {
   try {
-    if (!isAuthenticated(request)) {
+    if (!(await isAuthenticated(request))) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -69,7 +69,7 @@ export async function GET(request: Request) {
 /** POST: Import selected local skills into the hub */
 export async function POST(request: Request) {
   try {
-    if (!isAuthenticated(request)) {
+    if (!(await isAuthenticated(request))) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -113,7 +113,7 @@ export async function POST(request: Request) {
         const triggers = fm.triggers || [];
         const agent: "claude" | "hermes" | "both" = source;
 
-        upsertSkillFiles(slug, name, description, agent, triggers, files);
+        await upsertSkillFiles(slug, name, description, agent, triggers, files);
 
         result.imported++;
         result.skills.push({ slug, name });

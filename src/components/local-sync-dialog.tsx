@@ -37,24 +37,51 @@ export function LocalSyncDialog({ open, onClose, agent }: LocalSyncDialogProps) 
   const [expandDelete, setExpandDelete] = useState(true);
   const [resultMsg, setResultMsg] = useState("");
 
+  // Pure fetch — no phase setState here, so the effect below can call it without
+  // tripping react-hooks/set-state-in-effect (setState only runs after await).
+  const fetchCompareData = useCallback(async (): Promise<LocalSyncCompareResponse> => {
+    const res = await fetch("/api/skills/sync/local/compare", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent }),
+    });
+    if (!res.ok) {
+      const d = await res.json();
+      throw new Error(d.error || "Compare failed");
+    }
+    return (await res.json()) as LocalSyncCompareResponse;
+  }, [agent]);
+
+  // On open: fetch and apply. The effect body has no synchronous setState — the
+  // "comparing" loading state comes from the initial phase value on first mount.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    fetchCompareData()
+      .then((result) => {
+        if (cancelled) return;
+        setData(result);
+        setSelectedInstall(new Set());
+        setSelectedDelete(new Set());
+        setPhase("ready");
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : "Compare failed");
+        setPhase("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, fetchCompareData]);
+
+  // Used by buttons / post-action refresh (event handlers — setState is allowed).
   const compare = useCallback(async () => {
     setPhase("comparing");
     setError("");
     setResultMsg("");
-
     try {
-      const res = await fetch("/api/skills/sync/local/compare", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agent }),
-      });
-
-      if (!res.ok) {
-        const d = await res.json();
-        throw new Error(d.error || "Compare failed");
-      }
-
-      const result = await res.json() as LocalSyncCompareResponse;
+      const result = await fetchCompareData();
       setData(result);
       setSelectedInstall(new Set());
       setSelectedDelete(new Set());
@@ -63,11 +90,7 @@ export function LocalSyncDialog({ open, onClose, agent }: LocalSyncDialogProps) 
       setError(e instanceof Error ? e.message : "Compare failed");
       setPhase("error");
     }
-  }, [agent]);
-
-  useEffect(() => {
-    if (open) compare();
-  }, [open, compare]);
+  }, [fetchCompareData]);
 
   const handleInstall = async () => {
     const slugs = Array.from(selectedInstall);

@@ -28,12 +28,11 @@ export const AGENT_INSTALL_PATHS = {
 
 export const AGENT_TYPES = ["claude", "hermes", "both"] as const;
 
+// NOTE: DB path is owned by the libSQL client in db.ts (file:./data/local.db or
+// remote Turso). There is no FS skill-dir storage anymore, so only the master
+// key path is configurable here.
 export const DB_CONFIG = {
-  /** SQLite database file path */
-  dbPath: process.env.SKILL_DB_PATH || join(process.cwd(), "data", "skill-hub.db"),
-  /** Skill files storage directory */
-  dataDir: process.env.SKILL_DATA_DIR || join(process.cwd(), "data", "skills"),
-  /** Master API key file */
+  /** Master API key file — local fallback when SKILL_MASTER_KEY env is unset. */
   masterKeyPath: process.env.SKILL_MASTER_KEY_PATH || join(process.cwd(), "data", ".master-key"),
 } as const;
 

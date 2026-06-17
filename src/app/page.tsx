@@ -10,6 +10,8 @@ import { SkillForm } from "@/components/skill-form";
 import { ImportDialog } from "@/components/import-dialog";
 import { CategoryManager } from "@/components/category-manager";
 import { InstallLocalDialog } from "@/components/install-local-dialog";
+import { MoveCategoryDialog } from "@/components/move-category-dialog";
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import type { SkillMeta, CreateSkillInput } from "@/lib/types";
 
 export default function Dashboard() {
@@ -23,6 +25,8 @@ export default function Dashboard() {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
   const [installLocalOpen, setInstallLocalOpen] = useState(false);
+  const [moveTarget, setMoveTarget] = useState<SkillMeta | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<SkillMeta | null>(null);
   const [dragOverCategory, setDragOverCategory] = useState<string | null>(null);
   const [draggingSlug, setDraggingSlug] = useState<string | null>(null);
 
@@ -34,8 +38,11 @@ export default function Dashboard() {
       .catch(() => setAuthenticated(false));
   }, []);
 
+  // No synchronous setLoading(true): the mount effect calls this, and a sync
+  // setState there trips react-hooks/set-state-in-effect. Initial `loading` is
+  // already true, so first paint shows skeletons; we only clear it (async) once
+  // data arrives. Handlers that want a manual loading state can set it directly.
   const loadSkills = useCallback(() => {
-    setLoading(true);
     fetch("/api/skills")
       .then((r) => r.json())
       .then((data) => {
@@ -154,6 +161,19 @@ export default function Dashboard() {
     }
     const data = await fetch("/api/skills").then((r) => r.json());
     setSkills(data.skills || []);
+  };
+
+  const handleRequestMove = (skill: SkillMeta) => setMoveTarget(skill);
+  const handleRequestDelete = (skill: SkillMeta) => setDeleteTarget(skill);
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return;
+    const res = await fetch(`/api/skills/${deleteTarget.slug}`, { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `删除失败 (${res.status})`);
+    }
+    setSkills((prev) => prev.filter((s) => s.slug !== deleteTarget.slug));
   };
 
   // --- Drag and Drop ---
@@ -285,7 +305,7 @@ export default function Dashboard() {
                   >
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                       {groupSkills.map((skill) => (
-                        <SkillCard key={skill.slug} skill={skill} onDragStart={handleDragStart} />
+                        <SkillCard key={skill.slug} skill={skill} onDragStart={handleDragStart} authenticated={authenticated} onRequestMove={handleRequestMove} onRequestDelete={handleRequestDelete} />
                       ))}
                     </div>
                   </div>
@@ -324,7 +344,7 @@ export default function Dashboard() {
                   {!isCollapsed && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                       {groupSkills.map((skill) => (
-                        <SkillCard key={skill.slug} skill={skill} onDragStart={handleDragStart} />
+                        <SkillCard key={skill.slug} skill={skill} onDragStart={handleDragStart} authenticated={authenticated} onRequestMove={handleRequestMove} onRequestDelete={handleRequestDelete} />
                       ))}
                     </div>
                   )}
@@ -336,7 +356,7 @@ export default function Dashboard() {
           // Flat grid when no categories exist
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {filteredSkills.map((skill) => (
-              <SkillCard key={skill.slug} skill={skill} onDragStart={handleDragStart} />
+              <SkillCard key={skill.slug} skill={skill} onDragStart={handleDragStart} authenticated={authenticated} onRequestMove={handleRequestMove} onRequestDelete={handleRequestDelete} />
             ))}
           </div>
         )}
@@ -372,6 +392,23 @@ export default function Dashboard() {
         open={installLocalOpen}
         onClose={() => setInstallLocalOpen(false)}
         skills={skills}
+      />
+
+      <MoveCategoryDialog
+        key={`move-${moveTarget?.slug ?? "closed"}`}
+        open={moveTarget !== null}
+        skill={moveTarget}
+        categories={categories}
+        onClose={() => setMoveTarget(null)}
+        onMoved={loadSkills}
+      />
+
+      <ConfirmDeleteDialog
+        key={`delete-${deleteTarget?.slug ?? "closed"}`}
+        open={deleteTarget !== null}
+        skillName={deleteTarget?.name ?? ""}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleDeleteConfirm}
       />
     </div>
   );

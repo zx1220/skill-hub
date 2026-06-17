@@ -3,18 +3,21 @@ import { safeError } from "@/lib/api-utils";
 import { Readable } from "stream";
 import { ZipArchive } from "archiver";
 
+// Vercel: allow up to 60s for zip packaging of large skills.
+export const maxDuration = 60;
+
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ slug: string }> }
 ) {
   try {
     const { slug } = await params;
-    const skill = getSkillDetail(slug);
+    const skill = await getSkillDetail(slug);
     if (!skill) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
 
-    const files = getSkillFiles(slug);
+    const files = await getSkillFiles(slug);
 
     // Create a zip archive preserving subdirectory structure
     const archive = new ZipArchive({ zlib: { level: 6 } });

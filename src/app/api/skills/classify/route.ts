@@ -6,14 +6,14 @@ import { safeError } from "@/lib/api-utils";
 /** POST: Rule-based skill classification (incremental by default, ?force=true for all) */
 export async function POST(request: Request) {
   try {
-    if (!isAuthenticated(request)) {
+    if (!(await isAuthenticated(request))) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const url = new URL(request.url);
     const force = url.searchParams.get("force") === "true";
 
-    const skills = force ? listSkills() : listUncategorizedSkills();
+    const skills = force ? await listSkills() : await listUncategorizedSkills();
     if (skills.length === 0) {
       return Response.json({
         classified: 0,
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     }
 
     const classification = classifySkills(skills);
-    const updated = batchUpdateCategories(classification);
+    const updated = await batchUpdateCategories(classification);
 
     return Response.json({
       classified: updated,

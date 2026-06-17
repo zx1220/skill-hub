@@ -4,14 +4,14 @@ import { safeError } from "@/lib/api-utils";
 
 export async function GET(request: Request) {
   try {
-    if (!isAuthenticated(request)) {
+    if (!(await isAuthenticated(request))) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const url = new URL(request.url);
     const since = url.searchParams.get("since") || undefined;
 
-    const result = handlePull(since);
+    const result = await handlePull(since);
     return Response.json(result);
   } catch (e) {
     return safeError(e);

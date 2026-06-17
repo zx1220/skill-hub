@@ -5,7 +5,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { apiKey } = body as { apiKey: string };
 
-    if (!apiKey || !validateApiKey(apiKey)) {
+    if (!apiKey || !(await validateApiKey(apiKey))) {
       return Response.json({ error: "Invalid API key" }, { status: 401 });
     }
 

@@ -9,7 +9,7 @@ import { join, dirname, resolve } from "path";
 /** POST: Install Hub skills to local agent directory */
 export async function POST(request: Request) {
   try {
-    if (!isAuthenticated(request)) {
+    if (!(await isAuthenticated(request))) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -48,7 +48,7 @@ export async function POST(request: Request) {
         }
 
         // Get files from Hub
-        const files: SkillFile[] = getSkillFiles(slug);
+        const files: SkillFile[] = await getSkillFiles(slug);
         if (files.length === 0) {
           result.errors.push({ slug, error: "Skill not found in Hub" });
           continue;

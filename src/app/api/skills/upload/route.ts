@@ -6,7 +6,7 @@ import type { SkillFile, AgentType } from "@/lib/types";
 
 export async function POST(request: Request) {
   try {
-    if (!isAuthenticated(request)) {
+    if (!(await isAuthenticated(request))) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -75,7 +75,7 @@ export async function POST(request: Request) {
     const description = fm.description || "";
 
     const checksum = computeChecksum(skillFiles);
-    upsertSkillFiles(slug, name, description, agent, [], skillFiles);
+    await upsertSkillFiles(slug, name, description, agent, [], skillFiles);
 
     return Response.json({ slug, checksum }, { status: 201 });
   } catch (e) {

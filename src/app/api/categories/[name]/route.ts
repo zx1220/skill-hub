@@ -8,7 +8,7 @@ export async function PUT(
   { params }: { params: Promise<{ name: string }> }
 ) {
   try {
-    if (!isAuthenticated(request)) {
+    if (!(await isAuthenticated(request))) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -18,7 +18,7 @@ export async function PUT(
       return Response.json({ error: "New name is required" }, { status: 400 });
     }
 
-    const changes = updateCategory(decodeURIComponent(oldName), newName.trim());
+    const changes = await updateCategory(decodeURIComponent(oldName), newName.trim());
     if (changes === 0) {
       return Response.json({ error: "Category not found" }, { status: 404 });
     }
@@ -34,12 +34,12 @@ export async function DELETE(
   { params }: { params: Promise<{ name: string }> }
 ) {
   try {
-    if (!isAuthenticated(request)) {
+    if (!(await isAuthenticated(request))) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const { name } = await params;
-    const changes = deleteCategory(decodeURIComponent(name));
+    const changes = await deleteCategory(decodeURIComponent(name));
     if (changes === 0) {
       return Response.json({ error: "Category not found" }, { status: 404 });
     }

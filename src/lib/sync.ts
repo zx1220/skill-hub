@@ -1,4 +1,4 @@
-import { getDb } from "./db";
+import { getClient } from "./db";
 import {
   upsertSkillFiles,
   getSkillFiles,
@@ -8,17 +8,17 @@ import {
 import type { SyncPushRequest, SyncPullResponse, SyncChange, SyncStatusResponse } from "./types";
 
 /** Handle a push request from CLI */
-export function handlePush(data: SyncPushRequest): {
+export async function handlePush(data: SyncPushRequest): Promise<{
   ok: boolean;
   slug: string;
   checksum: string;
   conflict?: boolean;
-} {
-  const { slug, files, checksum, base_checksum } = data;
+}> {
+  const { slug, files, base_checksum } = data;
 
   // Conflict detection: if base_checksum provided, check against current
   if (base_checksum) {
-    const currentChecksum = getSkillChecksum(slug);
+    const currentChecksum = await getSkillChecksum(slug);
     if (currentChecksum && currentChecksum !== base_checksum) {
       return {
         ok: false,
@@ -38,7 +38,7 @@ export function handlePush(data: SyncPushRequest): {
   // Parse frontmatter for metadata
   const fm = parseFrontmatterContent(skillMd.content);
 
-  const result = upsertSkillFiles(
+  const result = await upsertSkillFiles(
     slug,
     fm.name || slug,
     fm.description || "",
@@ -55,23 +55,23 @@ export function handlePush(data: SyncPushRequest): {
 }
 
 /** Handle a pull request from CLI */
-export function handlePull(since?: string): SyncPullResponse {
-  const db = getDb();
-
+export async function handlePull(since?: string): Promise<SyncPullResponse> {
   if (!since) {
     // Full pull: return all skills
-    const skills = listSkills();
-    const changes: SyncChange[] = skills.map((skill) => {
-      const files = getSkillFiles(skill.slug);
-      const checksum = getSkillChecksum(skill.slug) || "";
-      return {
-        slug: skill.slug,
-        action: "create" as const,
-        files,
-        checksum,
-        timestamp: skill.updatedAt,
-      };
-    });
+    const skills = await listSkills();
+    const changes = await Promise.all(
+      skills.map(async (skill) => {
+        const files = await getSkillFiles(skill.slug);
+        const checksum = (await getSkillChecksum(skill.slug)) || "";
+        return {
+          slug: skill.slug,
+          action: "create" as const,
+          files,
+          checksum,
+          timestamp: skill.updatedAt,
+        };
+      })
+    );
 
     return {
       changes,
@@ -80,11 +80,13 @@ export function handlePull(since?: string): SyncPullResponse {
   }
 
   // Incremental pull: get changes from sync_log since timestamp
-  const logs = db
-    .prepare(
-      "SELECT DISTINCT skill_slug, action, MAX(timestamp) as timestamp FROM sync_log WHERE timestamp > ? GROUP BY skill_slug ORDER BY timestamp ASC"
-    )
-    .all(since) as Array<{ skill_slug: string; action: string; timestamp: string }>;
+  const client = await getClient();
+  const { rows } = await client.execute({
+    sql: `SELECT DISTINCT skill_slug, action, MAX(timestamp) as timestamp
+          FROM sync_log WHERE timestamp > ? GROUP BY skill_slug ORDER BY timestamp ASC`,
+    args: [since],
+  });
+  const logs = rows as unknown as Array<{ skill_slug: string; action: string; timestamp: string }>;
 
   const changes: SyncChange[] = [];
 
@@ -98,8 +100,8 @@ export function handlePull(since?: string): SyncPullResponse {
         timestamp: log.timestamp,
       });
     } else {
-      const files = getSkillFiles(log.skill_slug);
-      const checksum = getSkillChecksum(log.skill_slug) || "";
+      const files = await getSkillFiles(log.skill_slug);
+      const checksum = (await getSkillChecksum(log.skill_slug)) || "";
       changes.push({
         slug: log.skill_slug,
         action: log.action as "create" | "update",
@@ -117,14 +119,16 @@ export function handlePull(since?: string): SyncPullResponse {
 }
 
 /** Get server sync status */
-export function getSyncStatus(): SyncStatusResponse {
-  const db = getDb();
-  const skillRow = db.prepare("SELECT COUNT(*) as count FROM skills").get() as { count: number };
-  const lastRow = db.prepare("SELECT MAX(updated_at) as last FROM skills").get() as { last: string | null };
+export async function getSyncStatus(): Promise<SyncStatusResponse> {
+  const client = await getClient();
+  const skillRes = await client.execute("SELECT COUNT(*) as count FROM skills");
+  const lastRes = await client.execute("SELECT MAX(updated_at) as last FROM skills");
+  const skillRow = skillRes.rows[0] as unknown as { count?: number } | undefined;
+  const lastRow = lastRes.rows[0] as unknown as { last?: string | null } | undefined;
 
   return {
-    skill_count: skillRow.count,
-    last_modified: lastRow?.last || null,
+    skill_count: Number(skillRow?.count ?? 0),
+    last_modified: lastRow?.last ?? null,
     server_time: new Date().toISOString(),
   };
 }

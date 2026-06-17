@@ -5,7 +5,7 @@ import type { SyncPushRequest } from "@/lib/types";
 
 export async function POST(request: Request) {
   try {
-    if (!isAuthenticated(request)) {
+    if (!(await isAuthenticated(request))) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -18,7 +18,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = handlePush(data);
+    const result = await handlePush(data);
 
     if (result.conflict) {
       return Response.json(

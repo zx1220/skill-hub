@@ -81,7 +81,7 @@ done
 
 echo ""
 echo "Done! \${#SKILLS[@]} skill(s) installed to \$TARGET_DIR"`;
-  }, [skills, selected, agent, agentPath]);
+  }, [skills, selected, agentPath]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(script);

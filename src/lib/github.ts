@@ -1,3 +1,14 @@
+/**
+ * GitHub 集成（半遗留）。
+ *
+ * 运行时主数据源是 libSQL（见 storage.ts / db.ts），本模块的
+ * getSkillRegistry / getSkillDetail / upsertSkill / deleteSkill 等读写函数
+ * 【当前无路由调用】。仅 `buildInstallCmd`（安装命令拼接）被
+ * storage.ts / demo.ts 复用，请勿删除它。
+ *
+ * 60s 内存缓存 + registry.json 索引逻辑保留以备将来恢复 GitHub 后端。
+ * 修改主数据流时【不要】把这里当作数据源——存储真相在 storage.ts / db.ts。
+ */
 import { GITHUB_CONFIG } from "./constants";
 import type { SkillMeta, SkillDetail, SkillRegistry, CreateSkillInput, AgentType } from "./types";
 

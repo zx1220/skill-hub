@@ -4,11 +4,11 @@ import { safeError } from "@/lib/api-utils";
 
 export async function GET(request: Request) {
   try {
-    if (!isAuthenticated(request)) {
+    if (!(await isAuthenticated(request))) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const status = getSyncStatus();
+    const status = await getSyncStatus();
     return Response.json(status);
   } catch (e) {
     return safeError(e);

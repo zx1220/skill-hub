@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { X, Plus, Pencil, Trash2, Check, Loader2 } from "lucide-react";
 
 interface CategoryItem {
@@ -21,10 +21,29 @@ export function CategoryManager({ open, onClose }: CategoryManagerProps) {
   const [loading, setLoading] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
 
+  // Declared before the effect that uses it (avoids react-hooks/immutability).
+  // Returns data only — no setState inside, so the effect below can call it
+  // without tripping react-hooks/set-state-in-effect (setState is in .then).
+  const fetchCategories = useCallback(async (): Promise<CategoryItem[]> => {
+    try {
+      const res = await fetch("/api/categories");
+      if (res.ok) return (await res.json()) as CategoryItem[];
+    } catch { /* ignore */ }
+    return [];
+  }, []);
+
   useEffect(() => {
     if (!open) return;
-    fetchCategories();
-  }, [open]);
+    let cancelled = false;
+    fetchCategories()
+      .then((data) => {
+        if (!cancelled) setCategories(data);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open, fetchCategories]);
 
   useEffect(() => {
     if (editingIdx !== null && editInputRef.current) {
@@ -32,16 +51,6 @@ export function CategoryManager({ open, onClose }: CategoryManagerProps) {
       editInputRef.current.select();
     }
   }, [editingIdx]);
-
-  const fetchCategories = async () => {
-    try {
-      const res = await fetch("/api/categories");
-      if (res.ok) {
-        const data = await res.json();
-        setCategories(data);
-      }
-    } catch { /* ignore */ }
-  };
 
   if (!open) return null;
 
@@ -56,7 +65,7 @@ export function CategoryManager({ open, onClose }: CategoryManagerProps) {
       });
       if (res.ok) {
         setNewName("");
-        await fetchCategories();
+        setCategories(await fetchCategories());
       } else {
         const data = await res.json();
         alert(data.error || "添加失败");
@@ -82,7 +91,7 @@ export function CategoryManager({ open, onClose }: CategoryManagerProps) {
       });
       if (res.ok) {
         setEditingIdx(null);
-        await fetchCategories();
+        setCategories(await fetchCategories());
       } else {
         const data = await res.json();
         alert(data.error || "重命名失败");
@@ -102,7 +111,7 @@ export function CategoryManager({ open, onClose }: CategoryManagerProps) {
         method: "DELETE",
       });
       if (res.ok) {
-        await fetchCategories();
+        setCategories(await fetchCategories());
       } else {
         const data = await res.json();
         alert(data.error || "删除失败");

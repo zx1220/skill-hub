@@ -7,10 +7,10 @@ import type { CreateSkillInput } from "@/lib/types";
 export async function GET() {
   try {
     // Use demo data only when database is empty
-    if (!hasSkills()) {
+    if (!(await hasSkills())) {
       return Response.json(getDemoRegistry());
     }
-    const registry = getSkillRegistry();
+    const registry = await getSkillRegistry();
     return Response.json(registry);
   } catch (e) {
     return safeError(e);
@@ -19,7 +19,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    if (!isAuthenticated(request)) {
+    if (!(await isAuthenticated(request))) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -32,7 +32,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = upsertSkill(input);
+    const result = await upsertSkill(input);
     return Response.json(result, { status: 201 });
   } catch (e) {
     return safeError(e);

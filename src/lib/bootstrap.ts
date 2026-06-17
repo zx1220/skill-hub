@@ -1,19 +1,16 @@
-import { getDb } from "./db";
+import { getClient } from "./db";
 import { getMasterKey } from "./auth";
 
 /**
  * Initialize the application on first startup.
- * - Creates data directories
- * - Initializes SQLite database
- * - Generates master API key if not exists
+ * - Creates/verifies the database schema
+ * - Generates master API key if not exists (local dev only)
  *
- * Call this once when the server starts.
+ * NOTE: Most initialization is lazy via getClient(); this is optional and
+ * currently has no call site. Kept for future explicit warm-up.
  */
-export function initializeApp(): void {
-  // Initialize database (creates tables if needed)
-  getDb();
-
-  // Ensure master API key exists (generated on first run)
-  getMasterKey();
+export async function initializeApp(): Promise<void> {
+  await getClient();
+  await getMasterKey();
   console.log(`[skill-hub] Database initialized`);
 }
