@@ -1,4 +1,4 @@
-import { getClient } from "./db";
+import { queryRows, queryOne } from "./db";
 import {
   upsertSkillFiles,
   getSkillFiles,
@@ -80,13 +80,15 @@ export async function handlePull(since?: string): Promise<SyncPullResponse> {
   }
 
   // Incremental pull: get changes from sync_log since timestamp
-  const client = await getClient();
-  const { rows } = await client.execute({
-    sql: `SELECT DISTINCT skill_slug, action, MAX(timestamp) as timestamp
-          FROM sync_log WHERE timestamp > ? GROUP BY skill_slug ORDER BY timestamp ASC`,
-    args: [since],
-  });
-  const logs = rows as unknown as Array<{ skill_slug: string; action: string; timestamp: string }>;
+  const logs = await queryRows<{
+    skill_slug: string;
+    action: string;
+    timestamp: string;
+  }>(
+    `SELECT DISTINCT skill_slug, action, MAX(timestamp) as timestamp
+     FROM sync_log WHERE timestamp > ? GROUP BY skill_slug ORDER BY timestamp ASC`,
+    [since]
+  );
 
   const changes: SyncChange[] = [];
 
@@ -120,11 +122,12 @@ export async function handlePull(since?: string): Promise<SyncPullResponse> {
 
 /** Get server sync status */
 export async function getSyncStatus(): Promise<SyncStatusResponse> {
-  const client = await getClient();
-  const skillRes = await client.execute("SELECT COUNT(*) as count FROM skills");
-  const lastRes = await client.execute("SELECT MAX(updated_at) as last FROM skills");
-  const skillRow = skillRes.rows[0] as unknown as { count?: number } | undefined;
-  const lastRow = lastRes.rows[0] as unknown as { last?: string | null } | undefined;
+  const skillRow = await queryOne<{ count?: number }>(
+    "SELECT COUNT(*) as count FROM skills"
+  );
+  const lastRow = await queryOne<{ last?: string | null }>(
+    "SELECT MAX(updated_at) as last FROM skills"
+  );
 
   return {
     skill_count: Number(skillRow?.count ?? 0),

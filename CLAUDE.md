@@ -8,22 +8,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 bun install             # Install dependencies
-bun dev                 # Dev server on :3000
+bun dev                 # Dev server on :3000（需配置 SUPABASE_DB_URL）
 bun run build           # Production build (standalone output)
 bun start               # Start production server
 bun lint                # ESLint
-bun run migrate:turso   # 一次性脚本：迁移数据到 Turso 远程库 (scripts/migrate-to-turso.ts)
-bunx tsx verify-libsql.ts  # (临时) 数据层端到端自检，跑完即可删
+bun run migrate:supabase  # 一次性脚本：本地 libSQL (data/local.db) → Supabase Postgres (scripts/migrate-to-supabase.ts)
 ```
 
 No test framework is configured. Verify by running `bun dev` and checking the browser.
 
 ## Architecture
 
-**Skill Hub** — AI 技能注册中心，管理 Claude Code & Hermes 的技能。**主数据源是 libSQL**（本地 file / 远程 Turso），GitHub 仓库仅作为导入来源之一。
+**Skill Hub** — AI 技能注册中心，管理 Claude Code & Hermes 的技能。**主数据源是 Supabase Postgres**（`postgres.js` 客户端），GitHub 仓库仅作为导入来源之一。
 
 ```
-Web Dashboard ──▶ Next.js API ──▶ libSQL (本地 data/local.db / 远程 Turso)
+Web Dashboard ──▶ Next.js API ──▶ Supabase Postgres (SUPABASE_DB_URL)
                        │
             ┌──────────┼──────────────┐
      skill-sync CLI   导入源        本地 agent 同步
@@ -32,11 +31,12 @@ Web Dashboard ──▶ Next.js API ──▶ libSQL (本地 data/local.db / 远
 
 ### 数据存储（核心）
 
-- **libSQL**（`@libsql/client`，纯 JS、serverless 友好）—— 不是 better-sqlite3，GitHub 仓库也不再是主存储。
-  - 生产：`TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN`（远程 Turso）；`SKILL_DB_URL` 是 `TURSO_DATABASE_URL` 的别名。
-  - 本地开发回退：`file:./data/local.db`。
-  - schema 在 `src/lib/db.ts`（表：`skills` / `skill_files` / `sync_log` / `categories`）。`getClient()` 单例，首次连接幂等建表并播种默认分类。
-- `src/lib/storage.ts` — 基于 libSQL 的技能/分类 CRUD；`computeChecksum` 对文件内容做 SHA-256（取前 16 位）用于同步冲突检测。
+- **Supabase Postgres**（`postgres` / postgres.js，纯 JS、serverless 友好）—— 取代了原先的 libSQL/Turso。
+  - 连接串：`SUPABASE_DB_URL`（Supabase Dashboard → Database → Connection string → URI，pooler `:6543`）。
+  - **已无本地文件 fallback**：本地开发同样必须配置 `SUPABASE_DB_URL`（旧 `file:./data/local.db` 不再用于运行时，仅作 `migrate:supabase` 的数据源）。
+  - schema 在 `src/lib/db.ts`（表：`skills` / `skill_files` / `sync_log` / `categories`）。`getClient()` 返回 postgres.js 单例，首次连接幂等建表并播种默认分类；连接层把 `timestamptz` 解析为字符串（对齐旧 libSQL TEXT 行为）。
+  - 查询约定：`storage.ts`/`sync.ts` 的 SQL 沿用 `?` 占位符，经 `queryRows`/`queryOne`/`execWrite`/`txBatch`（db.ts 导出）内部转 Postgres `$N` + `sql.unsafe` 执行；事务批量走 `sql.begin`。
+- `src/lib/storage.ts` — 基于 Postgres 的技能/分类 CRUD；`computeChecksum` 对文件内容做 SHA-256（取前 16 位）用于同步冲突检测。
 - `src/lib/sync.ts` — CLI 同步协议（`handlePush` / `handlePull` / `getSyncStatus`），增量靠 `sync_log`。
 - `src/lib/demo.ts` — demo 数据（读 `public/demo-registry.json`）。
 - **`src/lib/github.ts` 是半遗留代码**：保留了 registry/CRUD 与 60s 内存缓存逻辑，但当前**无路由调用其读写函数**，仅 `buildInstallCmd`（安装命令拼接）被 `storage.ts` / `demo.ts` 复用。仓库导入走独立实现 `src/lib/github-import.ts`（Git Trees API 一次枚举 + Contents raw 下载，支持子路径单技能导入）。
@@ -92,13 +92,11 @@ Web Dashboard ──▶ Next.js API ──▶ libSQL (本地 data/local.db / 远
 
 | 变量 | 状态 | 说明 |
 |------|------|------|
-| `TURSO_DATABASE_URL` (`SKILL_DB_URL`) | 生产推荐 | 远程 Turso 库地址；不设则用本地 `file:./data/local.db` |
-| `TURSO_AUTH_TOKEN` | 生产推荐 | Turso 访问令牌 |
+| `SUPABASE_DB_URL` | **必填** | Supabase Postgres 直连串；本地开发也必须配置（无本地 fallback） |
 | `SKILL_MASTER_KEY` | 生产推荐 | master API key；不设则本地生成 `data/.master-key` |
 | `SKILL_REPO` / `GITHUB_TOKEN` / `SKILL_BRANCH` | 遗留 | 仅 `constants.ts` 的 `GITHUB_CONFIG` 读取，`github.ts` 读写函数当前无路由调用 |
 | `ANTHROPIC_API_KEY` | 预留 | `AI_CONFIG`，当前分类未使用 |
-| `SKILL_MASTER_KEY_PATH` | 高级 | 覆盖 master key 文件位置（`constants.ts` 的 `DB_CONFIG`；DB 路径由 `db.ts` 管理，不可配置）|
-| `SRC_DB` | 迁移专用 | `migrate-to-turso.ts` 的旧 better-sqlite3 源库，默认 `data/skill-hub.db` |
+| `SKILL_MASTER_KEY_PATH` | 高级 | 覆盖 master key 文件位置（`constants.ts` 的 `DB_CONFIG`）|
 
 ### 代码约定
 
@@ -107,7 +105,7 @@ Web Dashboard ──▶ Next.js API ──▶ libSQL (本地 data/local.db / 远
 - **Path alias** — `@/*` → `./src/*`。
 - **配置常量集中**在 `src/lib/constants.ts`（`AGENT_COLORS` / `AGENT_INSTALL_PATHS` / `DB_CONFIG` / `GITHUB_CONFIG` / `AI_CONFIG` / `SITE_CONFIG`）；`src/lib/api-utils.ts` 提供 `safeError()` 统一错误响应。
 - **Frontmatter 解析有多份副本**（`github.ts` / `storage.ts` 的 `buildSkillMd` / `sync.ts` 的 `parseFrontmatterContent` / `github-import.ts` / `local-scanner.ts`），**修改 frontmatter 格式时需全部同步**。
-- **数据库** — libSQL，schema 在 `src/lib/db.ts`；本地文件 `data/local.db`，惰性初始化（首次 `getClient()` 触发）。`src/lib/bootstrap.ts` 的 `initializeApp()` 当前**无调用点**。
+- **数据库** — Supabase Postgres（`postgres`/postgres.js），schema 在 `src/lib/db.ts`（幂等建表）。连接串 `SUPABASE_DB_URL`，无本地 fallback；旧 `data/local.db` 仅 `migrate:supabase` 用作迁移数据源。`src/lib/bootstrap.ts` 的 `initializeApp()` 当前**无调用点**。
 - **CLI** — `cli/skill-sync` 是独立 **Node.js** 脚本（`#!/usr/bin/env node`，非 shell），配置存 `~/.skill-hub.json`。命令：`auth` / `push` / `pull` / `list` / `install` / `status` / `migrate --from-github`。
 - **Docker** — 多阶段构建（`node:20-slim`），standalone 输出，`/app/data` 卷持久化。
 

@@ -1,7 +1,7 @@
 /**
  * GitHub 集成（半遗留）。
  *
- * 运行时主数据源是 libSQL（见 storage.ts / db.ts），本模块的
+ * 运行时主数据源是 Supabase Postgres（见 db.ts），本模块的
  * getSkillRegistry / getSkillDetail / upsertSkill / deleteSkill 等读写函数
  * 【当前无路由调用】。仅 `buildInstallCmd`（安装命令拼接）被
  * storage.ts / demo.ts 复用，请勿删除它。

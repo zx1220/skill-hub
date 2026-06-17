@@ -28,9 +28,8 @@ export const AGENT_INSTALL_PATHS = {
 
 export const AGENT_TYPES = ["claude", "hermes", "both"] as const;
 
-// NOTE: DB path is owned by the libSQL client in db.ts (file:./data/local.db or
-// remote Turso). There is no FS skill-dir storage anymore, so only the master
-// key path is configurable here.
+// NOTE: DB 连接由 db.ts 的 postgres.js 客户端管理（Supabase Postgres，SUPABASE_DB_URL）。
+// 已无 FS skill-dir 存储，此处仅 master key 路径可配置。
 export const DB_CONFIG = {
   /** Master API key file — local fallback when SKILL_MASTER_KEY env is unset. */
   masterKeyPath: process.env.SKILL_MASTER_KEY_PATH || join(process.cwd(), "data", ".master-key"),

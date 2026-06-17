@@ -1,6 +1,5 @@
 import { createHash } from "crypto";
-import { getClient } from "./db";
-import type { InArgs } from "@libsql/client";
+import { queryOne as one, queryRows as many, execWrite, txBatch } from "./db";
 import { buildInstallCmd } from "./github";
 import type {
   SkillMeta,
@@ -11,25 +10,8 @@ import type {
   SkillFile,
 } from "./types";
 
-// --- Internal query helpers (thin wrappers over libSQL execute) ---
-
-async function one<T = Record<string, unknown>>(
-  sql: string,
-  args: InArgs = []
-): Promise<T | undefined> {
-  const client = await getClient();
-  const { rows } = await client.execute({ sql, args });
-  return rows[0] as unknown as T | undefined;
-}
-
-async function many<T = Record<string, unknown>>(
-  sql: string,
-  args: InArgs = []
-): Promise<T[]> {
-  const client = await getClient();
-  const { rows } = await client.execute({ sql, args });
-  return rows as unknown as T[];
-}
+// one / many / execWrite / txBatch 来自 ./db（Postgres 查询 helper）。
+// SQL 沿用 ? 占位符，helper 内部自动转 Postgres 的 $N。
 
 // --- Skill markdown builder ---
 
@@ -87,7 +69,7 @@ function toSkillMeta(row: SkillListRow): SkillMeta {
 
 const LIST_SELECT = `
   SELECT s.slug, s.name, s.description, s.version, s.agent, s.triggers, s.updated_at, s.category,
-         GROUP_CONCAT(sf.filename, ',') as files
+         STRING_AGG(sf.filename, ',') as files
   FROM skills s
   LEFT JOIN skill_files sf ON s.slug = sf.skill_slug
 `;
@@ -160,42 +142,34 @@ const UPSERT_FILE_SQL = `
 `;
 
 export async function upsertSkill(input: CreateSkillInput): Promise<{ slug: string }> {
-  const client = await getClient();
   const { slug, name, description, triggers, agent } = input;
 
   const skillMd = buildSkillMd(input);
   const files: SkillFile[] = [{ filename: "SKILL.md", content: skillMd }];
   const checksum = computeChecksum(files);
-  const now = new Date().toISOString().replace("T", " ").replace("Z", "");
+  const now = new Date().toISOString();
   const triggersJson = JSON.stringify(triggers || []);
 
   const exists = await one("SELECT 1 FROM skills WHERE slug = ?", [slug]);
   const action = exists ? "update" : "create";
 
-  await client.batch(
-    [
-      { sql: UPSERT_SKILL_SQL, args: [slug, name, description, agent, triggersJson, now, checksum] },
-      { sql: UPSERT_FILE_SQL, args: [slug, "SKILL.md", skillMd, now] },
-      { sql: "INSERT INTO sync_log (skill_slug, action, timestamp) VALUES (?, ?, ?)", args: [slug, action, now] },
-    ],
-    "write"
-  );
+  await txBatch([
+    { sql: UPSERT_SKILL_SQL, args: [slug, name, description, agent, triggersJson, now, checksum] },
+    { sql: UPSERT_FILE_SQL, args: [slug, "SKILL.md", skillMd, now] },
+    { sql: "INSERT INTO sync_log (skill_slug, action, timestamp) VALUES (?, ?, ?)", args: [slug, action, now] },
+  ]);
 
   return { slug };
 }
 
 export async function deleteSkill(slug: string): Promise<void> {
-  const client = await getClient();
-  const now = new Date().toISOString().replace("T", " ").replace("Z", "");
+  const now = new Date().toISOString();
 
-  await client.batch(
-    [
-      { sql: "DELETE FROM skill_files WHERE skill_slug = ?", args: [slug] },
-      { sql: "DELETE FROM skills WHERE slug = ?", args: [slug] },
-      { sql: "INSERT INTO sync_log (skill_slug, action, timestamp) VALUES (?, 'delete', ?)", args: [slug, now] },
-    ],
-    "write"
-  );
+  await txBatch([
+    { sql: "DELETE FROM skill_files WHERE skill_slug = ?", args: [slug] },
+    { sql: "DELETE FROM skills WHERE slug = ?", args: [slug] },
+    { sql: "INSERT INTO sync_log (skill_slug, action, timestamp) VALUES (?, 'delete', ?)", args: [slug, now] },
+  ]);
 }
 
 /** Upsert multiple files for a skill (used by sync push / imports). */
@@ -207,15 +181,14 @@ export async function upsertSkillFiles(
   triggers: string[],
   files: SkillFile[]
 ): Promise<{ slug: string; checksum: string }> {
-  const client = await getClient();
   const checksum = computeChecksum(files);
-  const now = new Date().toISOString().replace("T", " ").replace("Z", "");
+  const now = new Date().toISOString();
   const triggersJson = JSON.stringify(triggers || []);
 
   const exists = await one("SELECT 1 FROM skills WHERE slug = ?", [slug]);
   const action = exists ? "update" : "create";
 
-  const stmts: Array<{ sql: string; args: InArgs }> = [
+  const stmts: Array<{ sql: string; args: unknown[] }> = [
     { sql: UPSERT_SKILL_SQL, args: [slug, name, description, agent, triggersJson, now, checksum] },
   ];
 
@@ -237,7 +210,7 @@ export async function upsertSkillFiles(
     args: [slug, action, now],
   });
 
-  await client.batch(stmts, "write");
+  await txBatch(stmts);
 
   return { slug, checksum };
 }
@@ -271,12 +244,7 @@ export async function updateSkillCategory(
   slug: string,
   category: string | null
 ): Promise<number> {
-  const client = await getClient();
-  const result = await client.execute({
-    sql: "UPDATE skills SET category = ? WHERE slug = ?",
-    args: [category, slug],
-  });
-  return result.rowsAffected;
+  return execWrite("UPDATE skills SET category = ? WHERE slug = ?", [category, slug]);
 }
 
 /** List skills that have no category set. */
@@ -291,18 +259,16 @@ export async function listUncategorizedSkills(): Promise<SkillMeta[]> {
 export async function batchUpdateCategories(
   categories: Record<string, string>
 ): Promise<number> {
-  const client = await getClient();
   const entries = Object.entries(categories);
   if (entries.length === 0) return 0;
 
-  const results = await client.batch(
+  const counts = await txBatch(
     entries.map(([slug, category]) => ({
       sql: "UPDATE skills SET category = ? WHERE slug = ?",
       args: [category, slug],
-    })),
-    "write"
+    }))
   );
-  return results.reduce((n, r) => n + (r.rowsAffected ?? 0), 0);
+  return counts.reduce((n, c) => n + c, 0);
 }
 
 /** Get files for a skill. */
@@ -334,39 +300,30 @@ export async function listCategories(): Promise<CategoryRow[]> {
 }
 
 export async function createCategory(name: string, sortOrder?: number): Promise<void> {
-  const client = await getClient();
   if (sortOrder === undefined) {
     const max = await one<{ m: number | null }>(
       "SELECT MAX(sort_order) as m FROM categories"
     );
     sortOrder = (Number(max?.m ?? -1)) + 1;
   }
-  await client.execute({
-    sql: "INSERT INTO categories (name, sort_order) VALUES (?, ?)",
-    args: [name, sortOrder],
-  });
+  await execWrite("INSERT INTO categories (name, sort_order) VALUES (?, ?)", [
+    name,
+    sortOrder,
+  ]);
 }
 
 export async function updateCategory(oldName: string, newName: string): Promise<number> {
-  const client = await getClient();
-  const results = await client.batch(
-    [
-      { sql: "UPDATE categories SET name = ? WHERE name = ?", args: [newName, oldName] },
-      { sql: "UPDATE skills SET category = ? WHERE category = ?", args: [newName, oldName] },
-    ],
-    "write"
-  );
-  return results[0].rowsAffected ?? 0;
+  const counts = await txBatch([
+    { sql: "UPDATE categories SET name = ? WHERE name = ?", args: [newName, oldName] },
+    { sql: "UPDATE skills SET category = ? WHERE category = ?", args: [newName, oldName] },
+  ]);
+  return counts[0] ?? 0;
 }
 
 export async function deleteCategory(name: string): Promise<number> {
-  const client = await getClient();
-  const results = await client.batch(
-    [
-      { sql: "UPDATE skills SET category = NULL WHERE category = ?", args: [name] },
-      { sql: "DELETE FROM categories WHERE name = ?", args: [name] },
-    ],
-    "write"
-  );
-  return results[1].rowsAffected ?? 0;
+  const counts = await txBatch([
+    { sql: "UPDATE skills SET category = NULL WHERE category = ?", args: [name] },
+    { sql: "DELETE FROM categories WHERE name = ?", args: [name] },
+  ]);
+  return counts[1] ?? 0;
 }
